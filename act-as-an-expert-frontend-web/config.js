@@ -2,7 +2,7 @@
 // Replace the production placeholder with the URL of the deployed Render service.
 const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.protocol === 'file:'
   ? 'http://localhost:5000'
-  : 'https://YOUR-RENDER-BACKEND-URL.onrender.com';
+  : 'https://twende-events-backend.onrender.com';
 
 // Resolve relative uploads against the API and upgrade legacy localhost URLs
 // already stored in the database when the frontend is deployed.
