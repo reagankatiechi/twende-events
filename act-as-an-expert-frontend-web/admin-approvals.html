@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f6f8">
+  <title>Pending Approvals | Twende Events Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+<script src="config.js"></script></head>
+<body class="admin-dashboard-page">
+  <div class="admin-shell">
+    <aside class="admin-sidebar">
+      <a class="admin-brand" href="index.html" aria-label="Twende Events home">
+        <span class="admin-brand-icon" aria-hidden="true">▣</span>
+        <span>twende<span>events</span></span>
+      </a>
+      <p class="admin-portal-label">ORGANIZER PORTAL</p>
+
+      <nav class="admin-sidebar-nav" aria-label="Organizer navigation">
+        <a class="admin-nav-link" href="dashboard.html"><span aria-hidden="true">⌂</span> Overview</a>
+        <a class="admin-nav-link" href="dashboard.html#recent-events"><span aria-hidden="true">▤</span> My Events</a>
+        <a class="admin-nav-link" href="admin-users.html"><span aria-hidden="true">♙</span> Users</a>
+        <a class="admin-nav-link" href="scanner.html"><span aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><rect x="7" y="7" width="10" height="10"></rect></svg></span> Gate Scanner</a>
+        <a class="admin-nav-link is-active" href="admin-approvals.html" aria-current="page"><span aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><circle cx="12" cy="13" r="3"></circle><path d="M12 10v3"></path></svg></span> Pending Approvals</a>
+        <a class="admin-nav-link admin-nav-create" href="create-event.html"><span aria-hidden="true">＋</span> Create Event</a>
+      </nav>
+      <a class="admin-back-link" href="index.html">← Back to Twende Events</a>
+    </aside>
+
+    <main class="admin-main">
+      <header class="admin-top-header">
+        <div><p class="admin-eyebrow">ORGANIZER PORTAL</p><h1>Pending Approvals</h1></div>
+        <div class="admin-user-chip" aria-label="Signed in as Admin"><span class="admin-user-avatar" aria-hidden="true">A</span><span>Admin</span></div>
+      </header>
+
+      <section class="admin-events-panel admin-users-panel" aria-labelledby="pending-events-title">
+        <div class="admin-section-heading admin-events-heading">
+          <div><p class="admin-eyebrow">EVENT MODERATION</p><h2 id="pending-events-title">Pending Approvals</h2></div>
+          <span class="admin-users-caption">Review before publishing</span>
+        </div>
+        <div class="admin-table-wrap">
+          <table class="admin-events-table admin-approvals-table">
+            <thead><tr><th scope="col">Event ID</th><th scope="col">Title</th><th scope="col">Category</th><th scope="col">Venue</th><th scope="col">Start Time</th><th scope="col">Actions</th></tr></thead>
+            <tbody id="pending-events-table-body" aria-live="polite"><tr><td class="admin-table-message" colspan="6">Loading pending events…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="review-modal" class="review-modal" aria-hidden="true">
+    <div class="review-modal-card" role="dialog" aria-modal="true" aria-labelledby="review-event-title">
+      <button class="review-modal-close" type="button" aria-label="Close review" onclick="closeModal()">&times;</button>
+      <img id="review-event-poster" class="review-event-poster" src="" alt="Event poster">
+      <div class="review-event-content">
+        <p id="review-event-category" class="admin-eyebrow"></p>
+        <h2 id="review-event-title"></h2>
+        <dl class="review-event-details">
+          <div><dt>Venue</dt><dd id="review-event-venue"></dd></div>
+          <div><dt>Start Time</dt><dd id="review-event-start"></dd></div>
+          <div><dt>Description</dt><dd id="review-event-description"></dd></div>
+          <div><dt>Organizer</dt><dd id="review-organizer-name"></dd></div>
+          <div><dt>Organizer Email</dt><dd id="review-organizer-email"></dd></div>
+        </dl>
+      </div>
+    </div>
+  </div>
+
+  <div id="editModal" class="review-modal" aria-hidden="true">
+    <section class="edit-modal-card" role="dialog" aria-modal="true" aria-labelledby="edit-modal-title">
+      <button class="review-modal-close" type="button" aria-label="Close edit form" onclick="closeEditModal()">&times;</button>
+      <p class="admin-eyebrow">EVENT MODERATION</p>
+      <h2 id="edit-modal-title">Edit event submission</h2>
+      <form id="edit-event-form" class="edit-event-form">
+        <input id="edit-event-id" name="event_id" type="hidden">
+        <label for="edit-event-name">Title</label>
+        <input id="edit-event-name" name="title" type="text" required>
+        <label for="edit-event-category">Category</label>
+        <select id="edit-event-category" name="category" required>
+          <option value="Concert">Concert</option>
+          <option value="Party">Party</option>
+          <option value="Comedy">Comedy</option>
+          <option value="Festival">Festival</option>
+          <option value="Sports">Sports</option>
+          <option value="Networking">Networking</option>
+          <option value="Campus">Campus</option>
+          <option value="Brunch">Brunch</option>
+          <option value="Other">Other</option>
+        </select>
+        <label for="edit-event-venue">Venue</label>
+        <input id="edit-event-venue" name="venue" type="text" required>
+        <label for="edit-event-start-time">Start Time</label>
+        <input id="edit-event-start-time" name="start_time" type="datetime-local" required>
+        <label for="edit-event-description">Description</label>
+        <textarea id="edit-event-description" name="description" rows="5"></textarea>
+        <div class="edit-modal-actions">
+          <button class="edit-cancel-button" type="button" onclick="closeEditModal()">Cancel</button>
+          <button class="edit-save-button" type="submit">Save Changes</button>
+        </div>
+      </form>
+    </section>
+  </div>
+
+  <script>
+    let pendingEventsData = [];
+    const pendingEventsBody = document.getElementById('pending-events-table-body');
+    const escapeApprovalValue = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[character]);
+    const formatApprovalDate = (value) => {
+      if (!value) return 'Date to be announced';
+      const raw = String(value);
+      const parsed = new Date(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?$/.test(raw) ? raw.replace(' ', 'T') : raw);
+      if (Number.isNaN(parsed.getTime())) return escapeApprovalValue(value);
+      return new Intl.DateTimeFormat('en-KE', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(parsed);
+    };
+
+    function openReviewModal(eventId) {
+      const event = pendingEventsData.find((item) => String(item.event_id ?? item.id) === String(eventId));
+      if (!event) return;
+
+      const poster = document.getElementById('review-event-poster');
+      const rawPosterUrl = String(event.poster_url || '').trim();
+      const posterPath = rawPosterUrl.replace(/^file:\/\/\/[a-z]:/i, '').replace(/\\/g, '/');
+      poster.src = apiAssetUrl(posterPath) || 'https://placehold.co/960x540?text=Event+Poster';
+      poster.alt = `${event.title || 'Event'} poster`;
+      document.getElementById('review-event-title').textContent = event.title || 'Untitled event';
+      document.getElementById('review-event-category').textContent = event.category || 'Category not provided';
+      document.getElementById('review-event-venue').textContent = event.venue || 'Venue to be announced';
+      document.getElementById('review-event-start').textContent = formatApprovalDate(event.start_time);
+      document.getElementById('review-event-description').textContent = event.description || 'No description provided.';
+      document.getElementById('review-organizer-name').textContent = event.organizer_name || 'Not provided';
+      document.getElementById('review-organizer-email').textContent = event.organizer_email || 'Not provided';
+
+      const modal = document.getElementById('review-modal');
+      modal.classList.add('is-open');
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.classList.add('review-modal-open');
+      modal.querySelector('.review-modal-close').focus();
+    }
+
+    function closeModal() {
+      const modal = document.getElementById('review-modal');
+      modal.classList.remove('is-open');
+      modal.setAttribute('aria-hidden', 'true');
+      document.body.classList.remove('review-modal-open');
+    }
+
+    function toDateTimeLocal(value) {
+      if (!value) return '';
+      const raw = String(value);
+      const parsed = new Date(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?$/.test(raw) ? raw.replace(' ', 'T') : raw);
+      if (Number.isNaN(parsed.getTime())) return '';
+      const pad = (part) => String(part).padStart(2, '0');
+      return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
+    }
+
+    function openEditModal(eventId) {
+      const event = pendingEventsData.find((item) => String(item.event_id ?? item.id) === String(eventId));
+      if (!event) return;
+      document.getElementById('edit-event-id').value = event.event_id ?? event.id;
+      document.getElementById('edit-event-name').value = event.title || '';
+      const categorySelect = document.getElementById('edit-event-category');
+      const category = event.category || '';
+      if (category && !Array.from(categorySelect.options).some((option) => option.value === category)) {
+        categorySelect.add(new Option(category, category));
+      }
+      categorySelect.value = category;
+      document.getElementById('edit-event-venue').value = event.venue || '';
+      document.getElementById('edit-event-start-time').value = toDateTimeLocal(event.start_time);
+      document.getElementById('edit-event-description').value = event.description || '';
+      const modal = document.getElementById('editModal');
+      modal.classList.add('is-open');
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.classList.add('review-modal-open');
+      document.getElementById('edit-event-name').focus();
+    }
+
+    function closeEditModal() {
+      const modal = document.getElementById('editModal');
+      modal.classList.remove('is-open');
+      modal.setAttribute('aria-hidden', 'true');
+      document.body.classList.remove('review-modal-open');
+    }
+
+    async function approveEvent(eventId) {
+      if (!window.confirm('Are you sure you want to approve this event and push it live?')) return;
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/admin/events/${encodeURIComponent(eventId)}/approve`, { method: 'PUT' });
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.message || data.error || 'The event could not be approved.');
+        }
+        window.location.reload();
+      } catch (error) {
+        console.error('Event approval failed:', error);
+        window.alert(error.message || 'The event could not be approved. Please try again.');
+      }
+    }
+
+    async function rejectEvent(eventId) {
+      if (!window.confirm('Are you sure you want to reject and delete this event submission?')) return;
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/admin/events/${encodeURIComponent(eventId)}/reject`, { method: 'DELETE' });
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.message || data.error || 'The event submission could not be rejected.');
+        }
+        window.location.reload();
+      } catch (error) {
+        console.error('Event rejection failed:', error);
+        window.alert(error.message || 'The event could not be rejected. Please try again.');
+      }
+    }
+
+    fetch(API_BASE_URL + '/api/admin/events/pending')
+      .then((response) => {
+        if (!response.ok) throw new Error(`Pending events request failed (${response.status})`);
+        return response.json();
+      })
+      .then((payload) => {
+        const events = Array.isArray(payload) ? payload : payload.events;
+        pendingEventsData = Array.isArray(events) ? events : [];
+        if (pendingEventsData.length === 0) {
+          pendingEventsBody.innerHTML = '<tr><td class="admin-table-message" colspan="6">There are no events waiting for approval.</td></tr>';
+          return;
+        }
+        pendingEventsBody.innerHTML = pendingEventsData.map((event) => {
+          const eventId = event.event_id ?? event.id ?? '';
+          return `<tr>
+            <td><span class="admin-event-id">#${escapeApprovalValue(eventId || '—')}</span></td>
+            <td><strong>${escapeApprovalValue(event.title || 'Untitled event')}</strong></td>
+            <td>${escapeApprovalValue(event.category || '—')}</td>
+            <td>${escapeApprovalValue(event.venue || 'Venue to be announced')}</td>
+            <td>${formatApprovalDate(event.start_time)}</td>
+            <td><div class="admin-approval-actions"><button class="admin-review-event" type="button" data-event-id="${escapeApprovalValue(eventId)}" onclick="openReviewModal(this.dataset.eventId)">Review</button><button class="admin-edit-event" type="button" data-event-id="${escapeApprovalValue(eventId)}" onclick="openEditModal(this.dataset.eventId)">Edit</button><button class="admin-approve-event" type="button" data-event-id="${escapeApprovalValue(eventId)}" onclick="approveEvent(this.dataset.eventId)">Approve</button><button class="admin-reject-event" type="button" data-event-id="${escapeApprovalValue(eventId)}" onclick="rejectEvent(this.dataset.eventId)">Reject</button></div></td>
+          </tr>`;
+        }).join('');
+      })
+      .catch((error) => {
+        console.error('Unable to load pending events:', error);
+        pendingEventsBody.innerHTML = '<tr><td class="admin-table-message is-error" colspan="6">Pending events could not be loaded. Please refresh to try again.</td></tr>';
+      });
+
+    document.getElementById('review-modal').addEventListener('click', (event) => {
+      if (event.target.id === 'review-modal') closeModal();
+    });
+    document.getElementById('editModal').addEventListener('click', (event) => {
+      if (event.target.id === 'editModal') closeEditModal();
+    });
+    document.getElementById('edit-event-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const eventId = document.getElementById('edit-event-id').value;
+      const title = document.getElementById('edit-event-name').value.trim();
+      const category = document.getElementById('edit-event-category').value;
+      const venue = document.getElementById('edit-event-venue').value.trim();
+      const start_time = document.getElementById('edit-event-start-time').value;
+      const description = document.getElementById('edit-event-description').value.trim();
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/admin/events/${encodeURIComponent(eventId)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, category, venue, start_time, description })
+        });
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.message || data.error || 'The event could not be updated.');
+        }
+        window.location.reload();
+      } catch (error) {
+        console.error('Event update failed:', error);
+        window.alert(error.message || 'The event could not be updated. Please try again.');
+      }
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closeModal();
+    });
+  </script>
+</body>
+</html>

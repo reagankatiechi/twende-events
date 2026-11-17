@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f8fa">
+  <title>Verify Ticket | Twende Events</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+<script src="config.js"></script></head>
+<body class="ticket-verification-page">
+  <header class="verify-header">
+    <a class="verify-brand" href="index.html" aria-label="Twende Events home"><span class="verify-brand-icon" aria-hidden="true">✓</span><span>twende<span>events</span></span></a>
+    <span class="verify-header-label">GATE TICKET CHECK</span>
+  </header>
+  <main class="verify-main">
+    <section class="verify-card" aria-labelledby="verify-title">
+      <p class="verify-overline">TWENDE EVENTS · KISII</p>
+      <div id="verify-status" class="verify-status is-loading" role="status" aria-live="polite">CHECKING TICKET</div>
+      <h1 id="verify-title">Ticket verification</h1>
+      <p id="verify-message" class="verify-message">Please wait while we check this ticket.</p>
+      <dl id="verify-details" class="verify-details" hidden>
+        <div><dt>ATTENDEE</dt><dd data-field="attendee_name">—</dd></div>
+        <div><dt>EVENT</dt><dd data-field="event_title">—</dd></div>
+        <div><dt>VENUE</dt><dd data-field="venue">—</dd></div>
+        <div><dt>DATE &amp; TIME</dt><dd data-field="start_time">—</dd></div>
+        <div><dt>TICKET TIER</dt><dd data-field="tier_name">—</dd></div>
+        <div><dt>TICKET CODE</dt><dd data-field="ticket_code">—</dd></div>
+        <div><dt>PURCHASED</dt><dd data-field="purchased_at">—</dd></div>
+        <div><dt>CHECK-IN STATUS</dt><dd data-field="ticket_status">—</dd></div>
+      </dl>
+      <button id="check-in-button" class="verify-checkin-button" type="button" hidden>Mark as Checked In</button>
+      <p id="verify-feedback" class="verify-feedback" aria-live="polite"></p>
+    </section>
+    <p class="verify-footnote">A ticket can only be checked in once. Confirm the event and attendee details before entry.</p>
+  </main>
+  <script>
+    (() => {
+      const API_BASE = API_BASE_URL;
+      const code = new URLSearchParams(window.location.search).get('code');
+      const statusBanner = document.getElementById('verify-status');
+      const message = document.getElementById('verify-message');
+      const details = document.getElementById('verify-details');
+      const checkInButton = document.getElementById('check-in-button');
+      const feedback = document.getElementById('verify-feedback');
+      let ticketData = null;
+
+      const formatDate = (value) => {
+        if (!value) return 'Date to be announced';
+        const raw = String(value);
+        const parsed = new Date(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?$/.test(raw) ? raw.replace(' ', 'T') : raw);
+        if (Number.isNaN(parsed.getTime())) return raw;
+        return new Intl.DateTimeFormat('en-KE', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(parsed);
+      };
+
+      const setStatus = (kind, label, copy) => {
+        statusBanner.className = `verify-status ${kind}`;
+        statusBanner.textContent = label;
+        message.textContent = copy;
+      };
+
+      const renderTicket = (ticket) => {
+        ticketData = ticket;
+        details.hidden = false;
+        details.querySelector('[data-field="attendee_name"]').textContent = ticket.attendee_name || 'Name unavailable';
+        details.querySelector('[data-field="event_title"]').textContent = ticket.event_title || 'Event unavailable';
+        details.querySelector('[data-field="venue"]').textContent = ticket.venue || 'Venue to be announced';
+        details.querySelector('[data-field="start_time"]').textContent = formatDate(ticket.start_time);
+        details.querySelector('[data-field="tier_name"]').textContent = ticket.tier_name || 'Not recorded for this ticket';
+        details.querySelector('[data-field="ticket_code"]').textContent = ticket.ticket_code || code;
+        details.querySelector('[data-field="purchased_at"]').textContent = formatDate(ticket.purchased_at);
+        details.querySelector('[data-field="ticket_status"]').textContent = ticket.status || 'valid';
+
+        if (ticket.status === 'used') {
+          setStatus('is-used', 'ALREADY USED', 'This ticket has already been checked in.');
+          checkInButton.hidden = true;
+        } else {
+          setStatus('is-valid', 'VALID TICKET', 'Ticket is valid and has not been checked in.');
+          checkInButton.hidden = false;
+        }
+      };
+
+      const loadTicket = async () => {
+        if (!code) {
+          setStatus('is-invalid', 'INVALID TICKET', 'No ticket code was included in this verification link.');
+          return;
+        }
+        try {
+          const response = await fetch(`${API_BASE}/api/tickets/verify/${encodeURIComponent(code)}`);
+          const data = await response.json().catch(() => ({}));
+          if (response.status === 404 || data.status === 'invalid') {
+            setStatus('is-invalid', 'INVALID TICKET', data.error || 'This ticket code could not be found.');
+            return;
+          }
+          if (!response.ok) throw new Error(data.error || 'Ticket verification is unavailable.');
+          renderTicket(data);
+        } catch (error) {
+          console.error('Ticket verification failed:', error);
+          setStatus('is-invalid', 'UNABLE TO VERIFY', 'Connect to the Twende Events server and try again.');
+        }
+      };
+
+      checkInButton.addEventListener('click', async () => {
+        if (!ticketData || ticketData.status === 'used') return;
+        checkInButton.disabled = true;
+        feedback.textContent = 'Checking in ticket…';
+        try {
+          const response = await fetch(`${API_BASE}/api/tickets/check-in/${encodeURIComponent(code)}`, { method: 'POST' });
+          const data = await response.json().catch(() => ({}));
+          if (response.status === 409 || data.status === 'used') {
+            ticketData.status = 'used';
+            renderTicket(ticketData);
+            feedback.textContent = data.error || 'This ticket was already checked in.';
+            return;
+          }
+          if (!response.ok || data.valid !== true) throw new Error(data.error || 'Could not check in this ticket.');
+          ticketData.status = 'used';
+          renderTicket(ticketData);
+          feedback.textContent = 'Check-in completed successfully.';
+        } catch (error) {
+          console.error('Ticket check-in failed:', error);
+          feedback.textContent = error.message || 'Could not check in this ticket. Please retry.';
+        } finally {
+          checkInButton.disabled = false;
+        }
+      });
+
+      loadTicket();
+    })();
+  </script>
+</body>
+</html>

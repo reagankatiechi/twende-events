@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#171719">
+  <meta name="description" content="Sign in to Twende Events to access your tickets, receipts and next plans.">
+  <title>Sign in | Twende Events</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+<script src="config.js"></script></head>
+<body class="login-page">
+  <div class="announcement"><div class="announcement-inner"><p class="help"><span class="help-label">NEED HELP?</span><a href="tel:+254762211213">+254762211213</a><span class="announcement-dot">·</span><a href="mailto:support@twendeevents.co.ke">support@twendeevents.co.ke</a></p><div class="preferences"><label><span class="sr-only">Currency</span><select aria-label="Currency"><option>KES</option><option>USD</option></select></label><span class="preference-divider"></span><label><span class="sr-only">Language</span><select aria-label="Language"><option>English</option><option>Kiswahili</option></select></label></div></div></div>
+  <main>
+    <section class="login-hero" aria-labelledby="login-title">
+      <div class="login-backdrop"></div>
+      <div class="login-layout">
+        <div class="login-intro">
+          <a class="login-brand" href="index.html" aria-label="Twende Events home"><svg viewBox="0 0 40 40" aria-hidden="true"><path d="M8 7h24a3 3 0 0 1 3 3v5a5 5 0 0 0 0 10v5a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3v-5a5 5 0 0 0 0-10v-5a3 3 0 0 1 3-3Z" fill="currentColor"/><path d="M15 12v16" stroke="#171719" stroke-width="2" stroke-dasharray="2 3"/><path d="m21 22 3 3 6-7" fill="none" stroke="#171719" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>twende<span>events</span></span></a>
+          <p class="login-overline"><span></span>YOUR TWENDE ACCOUNT</p>
+          <h1 id="login-title">Your tickets, receipts, and next plans in one place.</h1>
+          <p class="login-description">Sign in with your email or phone number and password to get back to your tickets, receipts and next plans.</p>
+          <div class="login-features"><div><b>Phone login</b><span>Use your registered number</span></div><div><b>Password protected</b><span>Your account stays secure</span></div><div><b>Ticket access</b><span>Plans and receipts in one place</span></div></div>
+        </div>
+        <section class="login-card" aria-labelledby="login-card-title">
+          <div class="login-card-heading"><h2 id="login-card-title">Welcome back</h2><p>Enter your email or phone number and password to sign in.</p></div>
+          <form id="login-form" class="login-form">
+            <div class="auth-panel" id="auth-panel-phone"><label class="login-field-label" for="login-phone">EMAIL OR PHONE NUMBER</label><div class="phone-entry"><label class="sr-only" for="country-code">Country code</label><select id="country-code" data-country-code-select aria-label="Country calling code"></select><input id="login-phone" name="identifier" type="text" placeholder="Email or phone number" autocomplete="username" required></div></div>
+            <div class="form-field"><label for="login-password">PASSWORD</label><input id="login-password" name="password" type="password" placeholder="Enter your password" autocomplete="current-password" required></div>
+            <p class="login-status" id="login-status" aria-live="polite" role="alert"></p>
+            <button class="login-submit" type="submit">Login <span>→</span></button>
+            <p class="login-register-link">Don't have an account? <a href="register.html">Register here.</a></p>
+          </form>
+          <p class="login-card-note">Use the phone number and password connected to your Twende Events account.</p>
+        </section>
+      </div>
+      <div class="login-hero-foot"><a href="index.html">← Back to Twende Events</a><span>KISII COUNTY · KENYA</span></div>
+    </section>
+  </main>
+<footer class="about-footer">
+    <span class="footer-watermark" aria-hidden="true">TWENDE</span>
+    <div class="footer-main"><div class="footer-brand-column"><a class="brand footer-brand" href="index.html"><svg class="brand-icon" viewBox="0 0 40 40" aria-hidden="true"><path d="M8 7h24a3 3 0 0 1 3 3v5a5 5 0 0 0 0 10v5a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3v-5a5 5 0 0 0 0-10v-5a3 3 0 0 1 3-3Z" fill="currentColor"/><path d="M15 12v16" stroke="white" stroke-width="2" stroke-dasharray="2 3"/></svg><span>twende<span class="brand-events">events</span></span></a><h2>Book the night before it sells out.</h2><p>Concerts, comedy, sports, brunches and late-night plans across Kisii County, paid for fast and scanned at the gate.</p><div class="social-links" aria-label="Social media"><a href="#facebook" aria-label="Facebook"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 21v-8h3l.5-3H14V8c0-.9.3-1.5 1.6-1.5h2V3.8c-.4-.1-1.5-.2-2.8-.2-2.8 0-4.7 1.7-4.7 4.8V10H7v3h3.1v8Z"/></svg></a><a href="#twitter" aria-label="Twitter"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 6.2a7 7 0 0 1-2 .6 3.5 3.5 0 0 0 1.5-1.9 7 7 0 0 1-2.2.9 3.5 3.5 0 0 0-6 3.2 10 10 0 0 1-7.2-3.7 3.5 3.5 0 0 0 1.1 4.7 3.5 3.5 0 0 1-1.6-.4v.1a3.5 3.5 0 0 0 2.8 3.4 3.5 3.5 0 0 1-1.6.1 3.5 3.5 0 0 0 3.2 2.4A7 7 0 0 1 4 17.1a10 10 0 0 0 15.4-8.4v-.5A7 7 0 0 0 21 6.2Z"/></svg></a><a href="#instagram" aria-label="Instagram"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.7" cy="6.7" r=".8" class="social-dot"/></svg></a></div></div>
+      <form class="newsletter-ticket"><div class="newsletter-ticket-head"><span>TY-2026</span><span>WEEKEND ACCESS</span></div><h3>Never miss the next drop.</h3><p>Get the good stuff first: new events, early access and ticket drops.</p><label class="sr-only" for="newsletter-email">Email address</label><div class="newsletter-input-row"><input id="newsletter-email" type="email" placeholder="reagan@example.com" required><button type="submit">Join</button></div><div class="newsletter-captcha"><span class="newsletter-check">✓</span><span>Success!</span><span class="newsletter-cloud">◒ CLOUDFLARE</span></div><div class="newsletter-barcode" aria-hidden="true"></div></form></div>
+    <div class="footer-divider"></div>
+    <div class="footer-bottom"><dl class="footer-info-grid"><div><dt>HOTLINE</dt><dd><a href="tel:+254114501544">+254 114501544</a></dd></div><div><dt>SUPPORT</dt><dd><a href="mailto:support@twendeevents.co.ke">support@twendeevents.co.ke</a></dd></div><div><dt>PAYMENTS</dt><dd>M-Pesa and cards</dd></div><div><dt>ENTRY</dt><dd>QR scan at the gate</dd></div><div><dt>ADDRESS</dt><dd>Kisii University, Kisii County</dd></div></dl><div class="footer-link-columns"><div><h3>DISCOVER</h3><a href="index.html#discover">All events</a><a href="index.html#discover">Map</a></div><div><h3>TWENDE EVENTS</h3><a href="about.html">About</a><a href="contact.html">Organizers</a><a href="contact.html">Help centre</a><a href="contact.html">Contact</a><a href="contact.html">Careers</a></div><div><h3>LEGAL</h3><a href="#terms">Terms and Conditions</a><a href="#privacy">Privacy Policy</a><a href="#refunds">Refund policy</a></div></div></div>
+    <div class="footer-copyright"><span>© 2026 Twende Events</span><span>Made for Kisii, with love <b>♥</b></span></div>
+  </footer>
+</body>
+</html>

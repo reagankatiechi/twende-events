@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#e60000">
+  <title>Create an Event | Twende Events</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+<script src="config.js"></script></head>
+<body class="create-event-page">
+  <div class="announcement">
+    <div class="announcement-inner">
+      <p class="help"><span class="help-label">NEED HELP?</span><a href="tel:+254762211213">+254762211213</a><span class="announcement-dot">·</span><a href="mailto:support@twendeevents.co.ke">support@twendeevents.co.ke</a></p>
+      <div class="preferences">
+        <label><span class="sr-only">Currency</span><select aria-label="Currency"><option>KES</option><option>USD</option></select></label>
+        <span class="preference-divider"></span>
+        <label><span class="sr-only">Language</span><select aria-label="Language"><option>English</option><option>Kiswahili</option></select></label>
+      </div>
+    </div>
+  </div>
+
+  <header class="site-header">
+    <nav class="navbar" aria-label="Main navigation">
+      <a class="brand organizer-brand" href="index.html" aria-label="Twende Events home">
+        <svg class="brand-icon" viewBox="0 0 40 40" aria-hidden="true"><path d="M8 7h24a3 3 0 0 1 3 3v5a5 5 0 0 0 0 10v5a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3v-5a5 5 0 0 0 0-10v-5a3 3 0 0 1 3-3Z" fill="currentColor"/><path d="M15 12v16m0-16v16" stroke="white" stroke-width="2" stroke-dasharray="2 3" opacity=".9"/><path d="m21 22 3 3 6-7" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>twende<span class="brand-events">events</span></span><small class="organizer-badge">ORGANIZER PORTAL</small>
+      </a>
+      <button id="mobile-menu-btn" class="menu-toggle hamburger" type="button" aria-expanded="false" aria-controls="mobile-drawer" aria-label="Open menu"><span></span><span></span><span></span></button>
+      <div class="nav-links" id="primary-links">
+        <a class="nav-link" href="index.html">Home</a>
+        <a class="nav-link" href="discover.html">Discover</a>
+        <a class="nav-link" href="about.html">About</a>
+        <a class="nav-link" href="blog.html">Blog</a>
+        <a class="nav-link" href="contact.html">Contact Us</a>
+      </div>
+      <div class="nav-actions"><a class="tickets-link" href="dashboard.html">My tickets</a><a href="login.html" class="btn-signin">Sign in</a></div>
+    </nav><div id="mobile-drawer" class="mobile-drawer" aria-hidden="true"><div class="mobile-drawer-scrim" data-drawer-close></div><div class="mobile-drawer-panel" role="dialog" aria-modal="true" aria-label="Mobile navigation"><div class="mobile-drawer-head"><a class="brand" href="index.html"><span>twende<span class="brand-events">events</span></span></a><button id="mobile-menu-close" class="mobile-drawer-close" type="button" aria-label="Close navigation">&times;</button></div><nav class="mobile-drawer-links" aria-label="Mobile navigation links"><a href="index.html">Home</a><a href="discover.html">Discover</a><a href="about.html">About</a><a href="blog.html">Blog</a><a href="contact.html">Contact Us</a><a href="dashboard.html">My tickets</a><a class="mobile-signin" href="login.html">Sign in</a></nav></div></div>
+  </header>
+
+  <main class="create-event-main">
+    <div class="create-event-container">
+      <header class="create-event-heading">
+        <p class="create-event-eyebrow">ORGANIZER PORTAL</p>
+        <h1>Create a New Event</h1>
+        <p>Set up your event details, tickets, and publish to the Kisii community.</p>
+      </header>
+
+      <form class="event-builder-card" id="event-builder-form">
+        <section class="builder-section" aria-labelledby="basic-details-title">
+          <div class="builder-section-heading"><span class="builder-step">01</span><div><h2 id="basic-details-title">Basic Details</h2><p>Tell people what your event is about.</p></div></div>
+          <div class="builder-fields">
+            <div class="builder-field full-width"><label for="event-name">Event Name</label><input id="event-name" name="eventName" type="text" placeholder="e.g., Kisii University Freshers Bash" required></div>
+            <div class="builder-field"><label for="event-category">Event Category</label><select id="event-category" name="category" required><option value="" disabled selected>Choose a category</option><option>Concert</option><option>Party</option><option>Comedy</option><option>Festival</option><option>Sports</option><option>Networking</option></select></div>
+            <div class="builder-field full-width"><label for="event-description">Event Description</label><textarea id="event-description" name="description" rows="5" placeholder="Share the details guests need to know about your event." required></textarea></div>
+          </div>
+        </section>
+
+        <section class="builder-section" aria-labelledby="date-location-title">
+          <div class="builder-section-heading"><span class="builder-step">02</span><div><h2 id="date-location-title">Date &amp; Location</h2><p>When and where should guests arrive?</p></div></div>
+          <div class="builder-fields">
+            <div class="builder-field"><label for="start-date">Start Date &amp; Time</label><input id="start-date" name="startDate" type="datetime-local" required></div>
+            <div class="builder-field"><label for="end-date">End Date &amp; Time</label><input id="end-date" name="endDate" type="datetime-local" required></div>
+            <div class="builder-field"><label for="venue-name">Venue Name</label><input id="venue-name" name="venue" type="text" placeholder="e.g., Kisii University Grounds, Dan's Hotel, Ufanisi Resort" required></div>
+            <div class="builder-field"><label for="event-city">City</label><input id="event-city" name="city" type="text" value="Kisii" required></div>
+          </div>
+        </section>
+
+        <section class="builder-section" aria-labelledby="artwork-title">
+          <div class="builder-section-heading"><span class="builder-step">03</span><div><h2 id="artwork-title">Artwork / Flyer</h2><p>Add a poster that helps your event stand out.</p></div></div>
+          <input class="poster-file-input" type="file" id="poster-upload" name="poster" accept="image/png,image/jpeg,image/webp">
+          <label class="poster-upload-zone" id="poster-upload-zone" for="poster-upload">
+            <span class="upload-icon" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M16 21V5m0 0-6 6m6-6 6 6M6 20v7h20v-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            <strong>Click to upload event poster</strong><span>PNG or JPG, max 5MB</span>
+          </label>
+          <p class="poster-upload-note" id="poster-upload-note" aria-live="polite"></p>
+        </section>
+
+        <section class="builder-section ticket-setup-section" aria-labelledby="ticket-setup-title">
+          <div class="builder-section-heading"><span class="builder-step">04</span><div><h2 id="ticket-setup-title">Ticket Setup</h2><p>Create the ticket options guests can choose from.</p></div></div>
+          <div class="ticket-tier-labels" aria-hidden="true"><span>Ticket Name</span><span>Price (KES)</span><span>Quantity Available</span><span></span></div>
+          <div id="ticket-tiers-container" class="ticket-tiers-container">
+            <div class="ticket-tier-row">
+              <div class="builder-field"><label for="tier-name-1">Ticket Name</label><input id="tier-name-1" name="ticketName[]" type="text" value="Regular" placeholder="e.g., Regular" required></div>
+              <div class="builder-field"><label for="tier-price-1">Price (KES)</label><input id="tier-price-1" name="ticketPrice[]" type="number" min="0" step="1" value="1000" placeholder="0" required></div>
+              <div class="builder-field"><label for="tier-quantity-1">Quantity Available</label><input id="tier-quantity-1" name="ticketQuantity[]" type="number" min="1" step="1" value="500" placeholder="500" required></div>
+              <span class="tier-row-spacer" aria-hidden="true"></span>
+            </div>
+          </div>
+          <button class="add-ticket-tier" type="button" id="add-ticket-tier">+ Add another ticket tier</button>
+        </section>
+
+        <div class="event-builder-actions">
+          <button type="button" class="save-draft-button" id="save-event-draft">Save Draft</button>
+          <button type="submit" class="publish-event-button">Publish Event <span aria-hidden="true">→</span></button>
+        </div>
+        <p class="builder-form-status" id="builder-form-status" aria-live="polite"></p>
+      </form>
+    </div>
+  </main>
+</body>
+</html>

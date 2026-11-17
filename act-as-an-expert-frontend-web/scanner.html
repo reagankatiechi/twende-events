@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101113">
+  <title>Gate Scanner | Twende Events</title>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    :root{color-scheme:dark;--bg:#101113;--panel:#1a1b1f;--red:#e60000;--green:#43b02a;--muted:#a5a7ad}*{box-sizing:border-box}body{min-height:100vh;margin:0;background:var(--bg);color:#f7f7f8;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif}.scanner-header{position:sticky;top:0;z-index:5;display:flex;min-height:64px;align-items:center;justify-content:center;padding:12px 18px;border-bottom:1px solid #ffffff12;background:#151619;text-align:center}.scanner-header h1{margin:0;font-size:16px;font-weight:750}.scanner-header h1 span{color:#ff3434}main{width:min(100% - 28px,620px);margin:0 auto;padding:25px 0 42px}.scanner-intro{margin:0 0 19px;text-align:center}.scanner-intro p{margin:0;color:var(--muted);font-size:13px;line-height:1.55}.camera-panel{padding:12px;overflow:hidden;border:1px solid #ffffff12;border-radius:15px;background:var(--panel);box-shadow:0 18px 50px #0005}#reader{width:600px;max-width:100%;margin:0 auto;overflow:hidden;border:0!important;border-radius:9px;background:#0c0d0f}#reader video{border-radius:8px;object-fit:cover}#reader__scan_region{min-height:250px}#reader__dashboard{padding:9px 5px 2px;color:#f2f2f3}#reader__dashboard_section_csr button,#reader__dashboard_section_swaplink{border:1px solid #ffffff26!important;border-radius:7px!important;background:#292a2f!important;color:#fff!important;cursor:pointer}#reader__dashboard_section_csr select{max-width:100%;padding:8px;border:1px solid #ffffff26;border-radius:7px;background:#202126;color:white}#reader a{color:#ff6969!important}#scan-result{margin-top:18px}.scan-message{padding:22px 18px;border:1px solid #ffffff16;border-radius:13px;background:var(--panel);text-align:center;animation:result-in .24s ease-out both}.scan-message h2{margin:0 0 8px;font-size:clamp(30px,9vw,48px);font-weight:900;letter-spacing:-1.7px;line-height:1}.scan-message p{margin:0;color:#d2d3d7;font-size:14px;line-height:1.55;overflow-wrap:anywhere}.scan-message .scan-ticket-title{margin-bottom:7px;color:#fff;font-size:18px;font-weight:750}.scan-message.is-success{border-color:#43b02a66;background:linear-gradient(145deg,#17311b,#1a1b1f 68%)}.scan-message.is-success h2{color:#65d84b}.scan-message.is-denied{border-color:#e6000059;background:linear-gradient(145deg,#3a1719,#1a1b1f 68%)}.scan-message.is-denied h2{color:#ff4848}.scan-next{display:block;width:100%;min-height:50px;margin-top:13px;border:0;border-radius:9px;background:var(--red);color:#fff;font:inherit;font-size:14px;font-weight:800;cursor:pointer;transition:background .18s,transform .18s}.scan-next:hover{transform:translateY(-1px);background:#c90000}.scan-next:focus-visible{outline:3px solid #fff;outline-offset:3px}.scanner-footnote{margin:17px 0 0;color:#74767d;font-size:11px;line-height:1.5;text-align:center}@keyframes result-in{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:translateY(0)}}@media(min-width:700px){.scanner-header{min-height:72px}.scanner-header h1{font-size:18px}main{padding-top:34px}.camera-panel{padding:16px}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+  </style>
+<script src="config.js"></script></head>
+<body>
+  <header class="scanner-header"><h1>Gate Scanner <span>—</span> Twende Events</h1></header>
+  <main>
+    <div class="scanner-intro"><p>Point the camera at a guest’s QR ticket to verify entry.</p></div>
+    <section class="camera-panel" aria-label="Ticket QR code camera scanner"><div id="reader" width="600px"></div></section>
+    <div id="scan-result" aria-live="assertive" aria-atomic="true"></div>
+    <p class="scanner-footnote">Keep this page open while checking tickets. Each ticket can only be accepted once.</p>
+  </main>
+  <script>
+    const scanResult = document.getElementById('scan-result');
+    const scannerConfig = { fps: 10, qrbox: { width: 250, height: 250 } };
+    const scanner = new Html5QrcodeScanner("reader", scannerConfig, false);
+    let scanInProgress = false;
+
+    function showScanResult({ granted, title = '', explanation = '' }) {
+      const panel = document.createElement('section');
+      panel.className = `scan-message ${granted ? 'is-success' : 'is-denied'}`;
+      const heading = document.createElement('h2');
+      heading.textContent = granted ? 'ACCESS GRANTED' : 'DENIED';
+      panel.appendChild(heading);
+      if (granted && title) {
+        const eventTitle = document.createElement('p');
+        eventTitle.className = 'scan-ticket-title';
+        eventTitle.textContent = title;
+        panel.appendChild(eventTitle);
+      }
+      const detail = document.createElement('p');
+      detail.textContent = explanation;
+      panel.appendChild(detail);
+      scanResult.replaceChildren(panel);
+      const next = document.createElement('button');
+      next.className = 'scan-next';
+      next.type = 'button';
+      next.textContent = 'Scan Next Ticket';
+      next.addEventListener('click', scanNextTicket);
+      scanResult.appendChild(next);
+    }
+
+    async function onScanSuccess(decodedText, decodedResult) {
+      if (scanInProgress) return;
+      scanInProgress = true;
+      try { scanner.pause(true); } catch (error) { console.warn('Could not pause scanner:', error); }
+      try {
+        let ticketCode = '';
+        try {
+          const decodedUrl = new URL(decodedText);
+          ticketCode = decodedUrl.searchParams.get('code') || '';
+        } catch (_) { /* Structured ticket text is handled below. */ }
+        const uuidMatch = decodedText.match(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i);
+        const labelledMatch = decodedText.match(/ticket\s*code\s*:\s*([a-z0-9_-]+)/i);
+        ticketCode = ticketCode || uuidMatch?.[0] || labelledMatch?.[1] || decodedText.trim();
+        if (!ticketCode) {
+          showScanResult({ granted: false, explanation: 'This QR code does not contain a ticket code.' });
+          return;
+        }
+
+        const verificationResponse = await fetch(`${API_BASE_URL}/api/tickets/verify/${encodeURIComponent(ticketCode)}`);
+        const verified = await verificationResponse.json().catch(() => ({}));
+        if (!verificationResponse.ok || verified.status !== 'valid') {
+          showScanResult({ granted: false, title: verified.event_title || '', explanation: verified.status === 'used' ? 'This ticket has already been checked in.' : verified.error || 'This ticket could not be verified.' });
+          return;
+        }
+
+        const checkInResponse = await fetch(`${API_BASE_URL}/api/tickets/check-in/${encodeURIComponent(ticketCode)}`, { method: 'POST' });
+        const checkedIn = await checkInResponse.json().catch(() => ({}));
+        if (checkInResponse.ok && checkedIn.valid === true) {
+          showScanResult({
+            granted: true,
+            title: verified.event_title || checkedIn.event_title || 'Ticket verified',
+            explanation: `Checked in ${verified.attendee_name || 'attendee'} at ${verified.venue || 'the venue'}. ${verified.start_time ? new Date(verified.start_time).toLocaleString() : ''}`.trim()
+          });
+        } else {
+          showScanResult({ granted: false, explanation: checkedIn.error || 'This ticket has already been used or is not valid.' });
+        }
+      } catch (error) {
+        console.error('Ticket scan request failed:', error);
+        showScanResult({ granted: false, explanation: 'Could not validate this ticket. Check your connection and try again.' });
+      }
+    }
+
+    function onScanFailure(decodedText, errorMessage) { /* Normal while camera searches between QR codes. */ }
+
+    function scanNextTicket() {
+      scanResult.replaceChildren();
+      scanInProgress = false;
+      try { scanner.resume(); } catch (error) {
+        console.error('Could not resume scanner:', error);
+        showScanResult({ granted: false, explanation: 'The camera could not restart. Refresh and allow camera access.' });
+      }
+    }
+
+    const reader = document.getElementById('reader');
+    if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      reader.innerHTML = '<p style="padding:24px;color:#f2f2f3;text-align:center;line-height:1.6">Camera access needs a secure page. Open this scanner through <strong>localhost</strong> or HTTPS, not directly as a file.</p>';
+    } else {
+      scanner.render(onScanSuccess, onScanFailure);
+    }
+  </script>
+</body>
+</html>

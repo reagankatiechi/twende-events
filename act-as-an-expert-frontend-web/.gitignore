@@ -1,0 +1,10 @@
+# Secrets and local environment files
+.env
+backend/.env
+
+# Dependencies
+node_modules/
+backend/node_modules/
+
+# macOS metadata
+.DS_Store

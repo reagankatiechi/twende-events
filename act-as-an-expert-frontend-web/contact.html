@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#e60000">
+  <meta name="description" content="Contact the Twende Events team for buyer support, event onboarding and partnerships in Kisii County.">
+  <title>Contact Us | Twende Events</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+<script src="config.js"></script></head>
+<body class="contact-page">
+  <div class="announcement">
+    <div class="announcement-inner">
+      <p class="help"><span class="help-label">NEED HELP?</span><a href="tel:+254762211213">+254762211213</a><span class="announcement-dot">·</span><a href="mailto:support@twendeevents.co.ke">support@twendeevents.co.ke</a></p>
+      <div class="preferences">
+        <label><span class="sr-only">Currency</span><select aria-label="Currency"><option>KES</option><option>USD</option></select></label>
+        <span class="preference-divider"></span>
+        <label><span class="sr-only">Language</span><select aria-label="Language"><option>English</option><option>Kiswahili</option></select></label>
+      </div>
+    </div>
+  </div>
+  <header class="site-header">
+    <nav class="navbar" aria-label="Main navigation">
+      <a class="brand" href="index.html#home" aria-label="Twende Events home">
+        <svg class="brand-icon" viewBox="0 0 40 40" aria-hidden="true"><path d="M8 7h24a3 3 0 0 1 3 3v5a5 5 0 0 0 0 10v5a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3v-5a5 5 0 0 0 0-10v-5a3 3 0 0 1 3-3Z" fill="currentColor"/><path d="M15 12v16" stroke="white" stroke-width="2" stroke-dasharray="2 3"/><path d="m21 22 3 3 6-7" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>twende<span class="brand-events">events</span></span>
+      </a>
+      <button id="mobile-menu-btn" class="menu-toggle hamburger" type="button" aria-expanded="false" aria-controls="mobile-drawer" aria-label="Open menu"><span></span><span></span><span></span></button>
+      <div class="nav-links" id="primary-links">
+        <a class="nav-link" href="index.html">Home</a><a class="nav-link" href="discover.html">Discover</a><a class="nav-link" href="about.html">About</a><a class="nav-link" href="blog.html">Blog</a><a class="nav-link active" href="contact.html" aria-current="page">Contact Us</a>
+      </div>
+      <div class="nav-actions"><a class="tickets-link" href="dashboard.html">My tickets</a><a href="login.html" class="btn-signin">Sign in</a></div>
+    </nav><div id="mobile-drawer" class="mobile-drawer" aria-hidden="true"><div class="mobile-drawer-scrim" data-drawer-close></div><div class="mobile-drawer-panel" role="dialog" aria-modal="true" aria-label="Mobile navigation"><div class="mobile-drawer-head"><a class="brand" href="index.html"><span>twende<span class="brand-events">events</span></span></a><button id="mobile-menu-close" class="mobile-drawer-close" type="button" aria-label="Close navigation">&times;</button></div><nav class="mobile-drawer-links" aria-label="Mobile navigation links"><a href="index.html">Home</a><a href="discover.html">Discover</a><a href="about.html">About</a><a href="blog.html">Blog</a><a href="contact.html">Contact Us</a><a href="dashboard.html">My tickets</a><a class="mobile-signin" href="login.html">Sign in</a></nav></div></div>
+  </header>
+  <main class="contact-main">
+    <section class="contact-hero" aria-labelledby="contact-title">
+      <span class="contact-watermark" aria-hidden="true">TWENDE</span>
+      <div class="contact-layout">
+        <div class="contact-copy">
+          <p class="contact-overline"><span></span>WE ARE CLOSE TO THE GATE</p>
+          <h1 id="contact-title">Talk to the team that keeps tickets moving.</h1>
+          <p class="contact-subtitle">Buyer support, onboarding and partnerships start here.</p>
+        </div>
+        <a class="support-ticket" href="tel:+254114501544" aria-label="Call Twende Events support at +254 114501544">
+          <span class="ticket-label">SUPPORT LINE</span>
+          <strong>+254 114501544</strong>
+          <span class="ticket-subtext">Open daily for active event support</span>
+          <span class="ticket-perforation" aria-hidden="true"></span>
+          <span class="ticket-barcode" aria-hidden="true"></span>
+          <span class="ticket-barcode-caption">TWENDE · KISII COUNTY · SUPPORT</span>
+        </a>
+      </div>
+      <div class="contact-footnote"><span>HERE FOR EVERY MOMENT</span><span>BUYERS · ORGANIZERS · PARTNERS</span></div>
+    </section>
+    <section class="send-note" aria-labelledby="send-note-title">
+      <div class="send-note-layout">
+        <div class="send-note-copy">
+          <p class="send-note-overline"><span></span>SEND A NOTE</p>
+          <h2 id="send-note-title">Give us the useful details first.</h2>
+          <p class="send-note-intro">Include the event name, order reference if you have one, and the phone or email used during checkout.</p>
+          <dl class="contact-info-grid">
+            <div><dt>PHONE</dt><dd><a href="tel:+254114501544">+254 114501544</a></dd></div>
+            <div><dt>EMAIL</dt><dd><a href="mailto:support@twendeevents.co.ke">support@twendeevents.co.ke</a></dd></div>
+            <div><dt>BASE</dt><dd>Kisii County, Kenya</dd></div>
+          </dl>
+        </div>
+        <form class="note-form" action="#" method="get">
+          <div class="form-field"><label for="note-name">NAME</label><input id="note-name" name="name" type="text" placeholder="Amina Wanjiru" autocomplete="name" required></div>
+          <div class="form-field"><label for="note-email">EMAIL</label><input id="note-email" name="email" type="email" placeholder="you@example.com" autocomplete="email" required></div>
+          <div class="form-field"><label for="note-topic">TOPIC</label><select id="note-topic" name="topic" required><option value="" selected disabled>Choose one</option><option>Ticket or payment support</option><option>Event organizer onboarding</option><option>Partnerships</option><option>Something else</option></select></div>
+          <div class="form-field"><label for="note-reference">ORDER REFERENCE</label><input id="note-reference" name="reference" type="text" placeholder="S00181"></div>
+          <div class="form-field form-message"><label for="note-message">MESSAGE</label><textarea id="note-message" name="message" rows="5" placeholder="Tell us what happened or what you want to launch." required></textarea></div>
+          <div class="turnstile-mock" aria-label="Captcha mockup: Success"><span class="turnstile-check" aria-hidden="true">✓</span><span class="turnstile-success">Success!</span><span class="cloudflare-mark" aria-hidden="true">◒</span><span class="cloudflare-wordmark">CLOUDFLARE</span></div>
+          <button class="note-submit" type="submit">Send your note <span aria-hidden="true">→</span></button>
+        </form>
+      </div>
+    </section>
+    <section class="faster-help" aria-labelledby="faster-help-title">
+      <div class="faster-help-layout">
+        <div class="faster-help-heading">
+          <p class="faster-help-overline"><span></span>FASTER HELP</p>
+          <h2 id="faster-help-title">What to send for the quickest reply.</h2>
+        </div>
+        <ol class="help-instructions">
+          <li><span class="help-number">01</span><h3>For tickets</h3><p>Event name, order reference, checkout phone and email.</p></li>
+          <li><span class="help-number">02</span><h3>For payments</h3><p>M-Pesa code, amount, payment time and event name.</p></li>
+          <li><span class="help-number">03</span><h3>For organizers</h3><p>Date, venue, ticket tiers and launch date.</p></li>
+        </ol>
+      </div>
+    </section>
+    <section class="faq-preview" aria-labelledby="faq-preview-title">
+      <div class="faq-preview-layout">
+        <div class="faq-preview-heading"><p class="faq-overline"><span></span>FAQS</p><h2 id="faq-preview-title">Answers before<br>you call.</h2><p class="faq-intro">For urgent gate-day issues, call the support line and keep your order reference ready.</p></div>
+        <div class="faq-preview-list">
+          <article class="faq-item"><h3><button class="faq-question" type="button" aria-expanded="false" aria-controls="faq-answer-1" id="faq-question-1"><span>Where do I find my ticket after payment?</span><span class="faq-plus" aria-hidden="true">+</span></button></h3><div class="faq-answer" id="faq-answer-1" role="region" aria-labelledby="faq-question-1" hidden><p>Your QR ticket is sent to the phone number or email used at checkout. Search for the event name or your Twende Events order reference if it is not immediately visible.</p></div></article>
+          <article class="faq-item"><h3><button class="faq-question" type="button" aria-expanded="false" aria-controls="faq-answer-2" id="faq-question-2"><span>Payment went through, no ticket?</span><span class="faq-plus" aria-hidden="true">+</span></button></h3><div class="faq-answer" id="faq-answer-2" role="region" aria-labelledby="faq-question-2" hidden><p>Send the M-Pesa confirmation code, amount paid, payment time, event name, and checkout phone number to <a href="mailto:support@twendeevents.co.ke">support@twendeevents.co.ke</a>.</p></div></article>
+          <article class="faq-item"><h3><button class="faq-question" type="button" aria-expanded="false" aria-controls="faq-answer-3" id="faq-question-3"><span>Can I change ticket details?</span><span class="faq-plus" aria-hidden="true">+</span></button></h3><div class="faq-answer" id="faq-answer-3" role="region" aria-labelledby="faq-question-3" hidden><p>Contact support with the order reference and the new attendee details. Some events restrict transfers close to gate opening, so send the request early.</p></div></article>
+          <article class="faq-item"><h3><button class="faq-question" type="button" aria-expanded="false" aria-controls="faq-answer-4" id="faq-question-4"><span>How do organizers start selling?</span><span class="faq-plus" aria-hidden="true">+</span></button></h3><div class="faq-answer" id="faq-answer-4" role="region" aria-labelledby="faq-question-4" hidden><p>Email the team with your event date, venue, artwork, expected attendance, ticket tiers, and preferred launch date.</p></div></article>
+          <article class="faq-item"><h3><button class="faq-question" type="button" aria-expanded="false" aria-controls="faq-answer-5" id="faq-question-5"><span>How do I delete my app account?</span><span class="faq-plus" aria-hidden="true">+</span></button></h3><div class="faq-answer" id="faq-answer-5" role="region" aria-labelledby="faq-question-5" hidden><p>Email <a href="mailto:support@twendeevents.co.ke">support@twendeevents.co.ke</a> from the address on your account and ask for it to be deleted. We'll confirm your identity, then permanently remove your account and personal data, keeping only what we're legally required to retain (e.g. payment records for past orders).</p></div></article>
+        </div>
+      </div>
+    </section>
+  </main>
+  <footer id="contact-footer"><span>© 2025 Twende Events</span><span>Made for Kisii, with love <span class="heart">♥</span></span><a href="mailto:support@twendeevents.co.ke">support@twendeevents.co.ke ↗</a></footer>
+</body>
+</html>
