@@ -838,6 +838,32 @@ body.mpesa-modal-open { overflow: hidden; }
 .admin-review-event { padding: 7px 12px; border: 1px solid #2474c6; border-radius: 6px; background: #eef6ff; color: #1763ad; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; transition: background .18s ease, color .18s ease; }
 .admin-review-event:hover { background: #2474c6; color: #fff; }
 .admin-review-event:focus-visible { outline: 2px solid #171717; outline-offset: 2px; }
+
+/* Admin Passcode Gate */
+.admin-shell[hidden] { display: none !important; }
+.admin-access-overlay { position: fixed; z-index: 1200; inset: 0; display: grid; place-items: center; padding: 22px; background: rgba(16, 18, 22, .72); backdrop-filter: blur(5px); }
+.admin-access-overlay[hidden] { display: none !important; }
+.admin-access-card { width: min(100%, 430px); padding: 37px; border: 1px solid #eee; border-radius: 18px; background: #fff; box-shadow: 0 28px 90px rgba(0,0,0,.28); }
+.admin-access-icon { display: grid; width: 46px; height: 46px; margin-bottom: 22px; place-items: center; border-radius: 13px; background: #fff0f0; color: #e60000; font-size: 25px; }
+.admin-access-card h1 { margin: 9px 0 8px; color: #171717; font-size: 29px; letter-spacing: -1px; }
+.admin-access-copy { margin: 0 0 24px; color: #716d6b; font-size: 14px; line-height: 1.55; }
+.admin-access-card label { display: block; margin-bottom: 8px; color: #454140; font-size: 12px; font-weight: 700; }
+.admin-passcode-field { display: flex; min-height: 49px; align-items: center; border: 1px solid #d9d9dc; border-radius: 9px; background: white; transition: border-color .18s, box-shadow .18s; }
+.admin-passcode-field:focus-within { border-color: #e60000; box-shadow: 0 0 0 3px rgba(230,0,0,.1); }
+.admin-passcode-field input { width: 100%; min-width: 0; padding: 0 13px; border: 0; outline: 0; background: transparent; color: #171717; font: inherit; font-size: 14px; }
+.admin-passcode-field button { margin-right: 8px; padding: 7px 9px; border: 0; border-radius: 6px; background: #f4f4f5; color: #555; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+.admin-passcode-field input.is-invalid { color: #b42318; }
+.admin-passcode-field:has(input.is-invalid) { border-color: #c62828; box-shadow: 0 0 0 3px rgba(198,40,40,.1); }
+.admin-access-error { min-height: 19px; margin: 8px 0 8px; color: #b42318; font-size: 12px; }
+.admin-unlock-button { width: 100%; min-height: 49px; border: 0; border-radius: 9px; background: #e60000; color: white; font: inherit; font-size: 14px; font-weight: 800; cursor: pointer; transition: background .18s, transform .18s; }
+.admin-unlock-button:hover { background: #c90000; transform: translateY(-1px); }
+.admin-unlock-button:disabled { opacity: .65; cursor: wait; transform: none; }
+.admin-lock-button { padding: 9px 12px; border: 1px solid #f0caca; border-radius: 8px; background: #fff; color: #cf0000; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; transition: background .18s, color .18s; }
+.admin-lock-button:hover { background: #e60000; color: #fff; }
+.admin-lock-button:focus-visible, .admin-unlock-button:focus-visible { outline: 2px solid #171717; outline-offset: 3px; }
+.admin-access-card .is-shaking { animation: admin-shake .42s ease-in-out; }
+@keyframes admin-shake { 20%, 60% { transform: translateX(-7px); } 40%, 80% { transform: translateX(7px); } }
+@media (max-width: 480px) { .admin-access-card { padding: 27px 22px; } .admin-access-card h1 { font-size: 25px; } }
 .admin-edit-event { padding: 7px 12px; border: 1px solid #d99216; border-radius: 6px; background: #fff7e6; color: #94600a; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; transition: background .18s ease, color .18s ease; }
 .admin-edit-event:hover { background: #e6a326; color: #fff; }
 .admin-edit-event:focus-visible { outline: 2px solid #171717; outline-offset: 2px; }

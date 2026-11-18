@@ -12,7 +12,7 @@
   <script src="app.js" defer></script>
 <script src="config.js"></script></head>
 <body class="admin-dashboard-page">
-  <div class="admin-shell">
+  <div class="admin-shell" hidden>
     <aside class="admin-sidebar">
       <a class="admin-brand" href="index.html" aria-label="Twende Events home">
         <span class="admin-brand-icon" aria-hidden="true">▣</span>
@@ -34,6 +34,7 @@
     <main class="admin-main">
       <header class="admin-top-header">
         <div><p class="admin-eyebrow">ORGANIZER PORTAL</p><h1>Pending Approvals</h1></div>
+        <button class="admin-lock-button" type="button" data-lock-admin>Lock Admin</button>
         <div class="admin-user-chip" aria-label="Signed in as Admin"><span class="admin-user-avatar" aria-hidden="true">A</span><span>Admin</span></div>
       </header>
 
@@ -51,6 +52,15 @@
       </section>
     </main>
   </div>
+
+  <section class="admin-access-overlay" id="admin-access-modal" role="dialog" aria-modal="true" aria-labelledby="admin-access-title">
+    <form class="admin-access-card" id="admin-access-form">
+      <span class="admin-access-icon" aria-hidden="true">▣</span><p class="admin-eyebrow">TWENDE EVENTS</p>
+      <h1 id="admin-access-title">Admin Access Required</h1><p class="admin-access-copy">Enter the admin passcode to review event submissions.</p>
+      <label for="admin-passcode">Admin password</label><div class="admin-passcode-field"><input id="admin-passcode" name="password" type="password" autocomplete="current-password" required><button type="button" id="toggle-admin-passcode" aria-label="Show password">Show</button></div>
+      <p id="admin-access-error" class="admin-access-error" role="alert" aria-live="polite"></p><button class="admin-unlock-button" type="submit">Unlock Dashboard</button>
+    </form>
+  </section>
 
   <div id="review-modal" class="review-modal" aria-hidden="true">
     <div class="review-modal-card" role="dialog" aria-modal="true" aria-labelledby="review-event-title">
@@ -190,7 +200,7 @@
     async function approveEvent(eventId) {
       if (!window.confirm('Are you sure you want to approve this event and push it live?')) return;
       try {
-        const response = await fetch(`${API_BASE_URL}/api/admin/events/${encodeURIComponent(eventId)}/approve`, { method: 'PUT' });
+        const response = await window.adminFetch(`${API_BASE_URL}/api/admin/events/${encodeURIComponent(eventId)}/approve`, { method: 'PUT' });
         if (!response.ok) {
           const data = await response.json().catch(() => ({}));
           throw new Error(data.message || data.error || 'The event could not be approved.');
@@ -205,7 +215,7 @@
     async function rejectEvent(eventId) {
       if (!window.confirm('Are you sure you want to reject and delete this event submission?')) return;
       try {
-        const response = await fetch(`${API_BASE_URL}/api/admin/events/${encodeURIComponent(eventId)}/reject`, { method: 'DELETE' });
+        const response = await window.adminFetch(`${API_BASE_URL}/api/admin/events/${encodeURIComponent(eventId)}/reject`, { method: 'DELETE' });
         if (!response.ok) {
           const data = await response.json().catch(() => ({}));
           throw new Error(data.message || data.error || 'The event submission could not be rejected.');
@@ -217,7 +227,7 @@
       }
     }
 
-    fetch(API_BASE_URL + '/api/admin/events/pending')
+    const loadPendingEvents = () => window.adminFetch(API_BASE_URL + '/api/admin/events/pending')
       .then((response) => {
         if (!response.ok) throw new Error(`Pending events request failed (${response.status})`);
         return response.json();
@@ -245,6 +255,8 @@
         console.error('Unable to load pending events:', error);
         pendingEventsBody.innerHTML = '<tr><td class="admin-table-message is-error" colspan="6">Pending events could not be loaded. Please refresh to try again.</td></tr>';
       });
+    if (window.adminAccessReady) loadPendingEvents();
+    else window.addEventListener('twende:admin-unlocked', loadPendingEvents, { once: true });
 
     document.getElementById('review-modal').addEventListener('click', (event) => {
       if (event.target.id === 'review-modal') closeModal();
@@ -261,7 +273,7 @@
       const start_time = document.getElementById('edit-event-start-time').value;
       const description = document.getElementById('edit-event-description').value.trim();
       try {
-        const response = await fetch(`${API_BASE_URL}/api/admin/events/${encodeURIComponent(eventId)}`, {
+        const response = await window.adminFetch(`${API_BASE_URL}/api/admin/events/${encodeURIComponent(eventId)}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ title, category, venue, start_time, description })

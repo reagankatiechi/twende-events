@@ -6,7 +6,7 @@ require('dotenv').config();
 const app = express();
 const multer = require('multer');
 const path = require('path');
-const { randomUUID } = require('crypto');
+const { randomUUID, createHmac, timingSafeEqual } = require('crypto');
 const cloudinary = require('cloudinary').v2;
 
 cloudinary.config({
@@ -72,6 +72,47 @@ const pool = mysql.createPool({
     connectionLimit: 10,
     queueLimit: 0
 });
+
+// Admin passcode tokens are HMAC-signed and expire after one work session.
+const getAdminPasscode = () => process.env.ADMIN_PASSCODE || 'twendeevents.co.ke';
+function createAdminToken() {
+    const payload = Buffer.from(JSON.stringify({ role: 'admin', exp: Math.floor(Date.now() / 1000) + 8 * 60 * 60 })).toString('base64url');
+    const signature = createHmac('sha256', getAdminPasscode()).update(payload).digest('base64url');
+    return `${payload}.${signature}`;
+}
+function isValidAdminToken(token) {
+    if (typeof token !== 'string') return false;
+    const [payload, signature, extra] = token.split('.');
+    if (!payload || !signature || extra) return false;
+    const expected = createHmac('sha256', getAdminPasscode()).update(payload).digest();
+    let supplied;
+    try { supplied = Buffer.from(signature, 'base64url'); } catch (_) { return false; }
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return false;
+    try {
+        const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+        return claims.role === 'admin' && Number(claims.exp) > Math.floor(Date.now() / 1000);
+    } catch (_) { return false; }
+}
+function requireAdminAccess(req, res, next) {
+    const bearer = /^Bearer\s+(.+)$/i.exec(req.get('authorization') || '');
+    const token = req.get('x-admin-token') || (bearer && bearer[1]);
+    if (!isValidAdminToken(token)) {
+        return res.status(401).json({ success: false, message: 'Admin access required.' });
+    }
+    req.admin = { role: 'admin' };
+    return next();
+}
+
+app.post('/api/admin/verify-passcode', (req, res) => {
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    if (password !== getAdminPasscode()) {
+        return res.status(401).json({ success: false, message: 'Incorrect admin password' });
+    }
+    return res.status(200).json({ success: true, adminToken: createAdminToken() });
+});
+
+// All admin API routes require a verified passcode token (x-admin-token or Bearer).
+app.use('/api/admin', requireAdminAccess);
 
 function payHeroAuthorization() {
     const username = process.env.PAYHERO_API_USERNAME;
@@ -484,7 +525,9 @@ app.post('/api/login', async (req, res) => {
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
-        res.status(200).json({ message: 'Login successful', user: users[0] });
+        const user = users[0];
+        const adminToken = String(user.role || '').toLowerCase() === 'admin' ? createAdminToken() : undefined;
+        res.status(200).json({ message: 'Login successful', user, ...(adminToken ? { adminToken } : {}) });
     } catch (error) {
         console.error('Error during login:', error);
         res.status(500).json({ error: 'Server error during login' });
@@ -808,7 +851,7 @@ app.put('/api/admin/events/:id', async (req, res) => {
     }
 });
 // Delete an event by ID
-app.delete('/api/events/:id', async (req, res) => {
+app.delete('/api/events/:id', requireAdminAccess, async (req, res) => {
     try {
         const eventId = req.params.id;
         
@@ -829,7 +872,7 @@ app.delete('/api/events/:id', async (req, res) => {
 });
 
 // Get organizer dashboard data (Events and basic stats)
-app.get('/api/dashboard/:organizerId', async (req, res) => {
+app.get('/api/dashboard/:organizerId', requireAdminAccess, async (req, res) => {
     try {
         const orgId = req.params.organizerId;
         

@@ -1,4 +1,4 @@
-// Shared account routing guards and the "My tickets" navigation.
+// Shared account routing guards, admin passcode gate, and "My tickets" navigation.
 (() => {
   const pageName = window.location.pathname.split('/').pop() || 'index.html';
   const adminPages = new Set(['dashboard.html', 'admin-approvals.html', 'admin-users.html']);
@@ -19,9 +19,83 @@
   const sessionUser = readSessionUser();
   if (pageName === 'user-dashboard.html' && !sessionUser) {
     window.location.replace('login.html?redirect=user-dashboard.html');
-  } else if (adminPages.has(pageName)) {
-    if (!sessionUser) window.location.replace('login.html');
-    else if (String(sessionUser.role || '').toLowerCase() !== 'admin') window.location.replace('user-dashboard.html');
+  }
+
+  window.adminAccessReady = false;
+  window.adminFetch = async (url, options = {}) => {
+    const headers = new Headers(options.headers || {});
+    const adminToken = sessionStorage.getItem('twende_admin_token');
+    if (adminToken) headers.set('x-admin-token', adminToken);
+    const response = await fetch(url, { ...options, headers });
+    if (response.status === 401 && adminPages.has(pageName) && adminToken) {
+      sessionStorage.removeItem('twende_admin_token');
+      window.location.reload();
+    }
+    return response;
+  };
+
+  if (adminPages.has(pageName)) {
+    const adminShell = document.querySelector('.admin-shell');
+    const accessModal = document.querySelector('#admin-access-modal');
+    const accessForm = document.querySelector('#admin-access-form');
+    const passcodeInput = document.querySelector('#admin-passcode');
+    const errorMessage = document.querySelector('#admin-access-error');
+    const showPasswordButton = document.querySelector('#toggle-admin-passcode');
+
+    const unlockAdmin = () => {
+      if (adminShell) adminShell.hidden = false;
+      if (accessModal) accessModal.hidden = true;
+      window.adminAccessReady = true;
+      window.dispatchEvent(new CustomEvent('twende:admin-unlocked'));
+    };
+
+    if (sessionStorage.getItem('twende_admin_token')) unlockAdmin();
+
+    showPasswordButton?.addEventListener('click', () => {
+      if (!passcodeInput) return;
+      const reveal = passcodeInput.type === 'password';
+      passcodeInput.type = reveal ? 'text' : 'password';
+      showPasswordButton.textContent = reveal ? 'Hide' : 'Show';
+      showPasswordButton.setAttribute('aria-label', reveal ? 'Hide password' : 'Show password');
+      passcodeInput.focus();
+    });
+
+    accessForm?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (!passcodeInput || !errorMessage) return;
+      errorMessage.textContent = '';
+      passcodeInput.classList.remove('is-invalid', 'is-shaking');
+      const submit = accessForm.querySelector('[type="submit"]');
+      if (submit) submit.disabled = true;
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/admin/verify-passcode`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: passcodeInput.value })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.success || !data.adminToken) {
+          throw new Error(data.message || 'Incorrect admin password');
+        }
+        sessionStorage.setItem('twende_admin_token', data.adminToken);
+        passcodeInput.value = '';
+        unlockAdmin();
+      } catch (error) {
+        errorMessage.textContent = error.message === 'Incorrect admin password' ? error.message : 'Unable to verify the passcode. Check your connection and try again.';
+        passcodeInput.classList.add('is-invalid', 'is-shaking');
+        passcodeInput.focus();
+        window.setTimeout(() => passcodeInput.classList.remove('is-shaking'), 500);
+      } finally {
+        if (submit) submit.disabled = false;
+      }
+    });
+
+    document.querySelectorAll('[data-lock-admin]').forEach((button) => {
+      button.addEventListener('click', () => {
+        sessionStorage.removeItem('twende_admin_token');
+        window.location.reload();
+      });
+    });
   }
 
   document.addEventListener('click', (event) => {
@@ -1342,7 +1416,7 @@ if (createEventForm && publishEventButton) {
 async function deleteEvent(eventId) {
   if (!window.confirm('Are you sure you want to delete this event?')) return;
   try {
-    const response = await fetch(`${API_BASE_URL}/api/events/${encodeURIComponent(eventId)}`, {
+      const response = await window.adminFetch(`${API_BASE_URL}/api/events/${encodeURIComponent(eventId)}`, {
       method: 'DELETE'
     });
     if (!response.ok) throw new Error(`Delete request failed (${response.status})`);
@@ -1373,7 +1447,7 @@ async function deleteEvent(eventId) {
 
   const loadAdminDashboard = async () => {
     try {
-      const response = await fetch(API_BASE_URL + '/api/admin/events');
+      const response = await window.adminFetch(API_BASE_URL + '/api/admin/events');
       if (!response.ok) throw new Error(`Dashboard request failed (${response.status})`);
       const events = await response.json();
       if (!Array.isArray(events)) throw new Error('The admin events endpoint did not return a list.');
@@ -1406,13 +1480,14 @@ async function deleteEvent(eventId) {
     }
   };
 
-  loadAdminDashboard();
+  if (window.adminAccessReady) loadAdminDashboard();
+  else window.addEventListener('twende:admin-unlocked', loadAdminDashboard, { once: true });
 })();
 
 async function deleteUser(userId) {
   if (!window.confirm('Are you sure you want to delete this user?')) return;
   try {
-    const response = await fetch(`${API_BASE_URL}/api/admin/users/${encodeURIComponent(userId)}`, {
+    const response = await window.adminFetch(`${API_BASE_URL}/api/admin/users/${encodeURIComponent(userId)}`, {
       method: 'DELETE'
     });
     if (!response.ok) throw new Error(`Delete request failed (${response.status})`);
@@ -1434,7 +1509,7 @@ async function deleteUser(userId) {
 
   const loadRegisteredUsers = async () => {
     try {
-      const response = await fetch(API_BASE_URL + '/api/admin/users');
+      const response = await window.adminFetch(API_BASE_URL + '/api/admin/users');
       if (!response.ok) throw new Error(`Users request failed (${response.status})`);
       const users = await response.json();
 
@@ -1457,7 +1532,8 @@ async function deleteUser(userId) {
     }
   };
 
-  loadRegisteredUsers();
+  if (window.adminAccessReady) loadRegisteredUsers();
+  else window.addEventListener('twende:admin-unlocked', loadRegisteredUsers, { once: true });
 })();
 
 // Phone and password login

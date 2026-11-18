@@ -12,7 +12,7 @@
   <script src="app.js" defer></script>
 <script src="config.js"></script></head>
 <body class="admin-dashboard-page">
-  <div class="admin-shell">
+  <div class="admin-shell" hidden>
     <aside class="admin-sidebar">
       <a class="admin-brand" href="index.html" aria-label="Twende Events home">
         <span class="admin-brand-icon" aria-hidden="true">▣</span>
@@ -55,6 +55,7 @@
           <p class="admin-eyebrow">ORGANIZER DASHBOARD</p>
           <h1>Overview</h1>
         </div>
+        <button class="admin-lock-button" type="button" data-lock-admin>Lock Admin</button>
         <div class="admin-user-chip" aria-label="Signed in as Admin">
           <span class="admin-user-avatar" aria-hidden="true">A</span>
           <span>Admin</span>
@@ -109,5 +110,17 @@
       </section>
     </main>
   </div>
+  <section class="admin-access-overlay" id="admin-access-modal" role="dialog" aria-modal="true" aria-labelledby="admin-access-title">
+    <form class="admin-access-card" id="admin-access-form">
+      <span class="admin-access-icon" aria-hidden="true">▣</span>
+      <p class="admin-eyebrow">TWENDE EVENTS</p>
+      <h1 id="admin-access-title">Admin Access Required</h1>
+      <p class="admin-access-copy">Enter the admin passcode to unlock the dashboard.</p>
+      <label for="admin-passcode">Admin password</label>
+      <div class="admin-passcode-field"><input id="admin-passcode" name="password" type="password" autocomplete="current-password" required><button type="button" id="toggle-admin-passcode" aria-label="Show password">Show</button></div>
+      <p id="admin-access-error" class="admin-access-error" role="alert" aria-live="polite"></p>
+      <button class="admin-unlock-button" type="submit">Unlock Dashboard</button>
+    </form>
+  </section>
 </body>
 </html>
