@@ -249,9 +249,13 @@ async function fetchPayHeroTransactionStatus(reference) {
 function normalizeKenyanPhone(phone) {
     const input = String(phone || '').trim();
     const digits = input.replace(/\D/g, '');
-    if (/^0[17]\d{8}$/.test(digits)) return `254${digits.slice(1)}`;
-    if (/^254[17]\d{8}$/.test(digits)) return digits;
-    throw new Error('Enter a valid Kenyan mobile number, such as 0712345678 or +254712345678.');
+    let normalized;
+    if (/^0[17]\d{8}$/.test(digits)) normalized = `254${digits.slice(1)}`;
+    else if (/^[17]\d{8}$/.test(digits)) normalized = `254${digits}`;
+    else if (/^254[17]\d{8}$/.test(digits)) normalized = digits;
+
+    if (normalized && /^254[17]\d{8}$/.test(normalized)) return normalized;
+    throw new Error('Enter a valid Kenyan mobile number, such as 0712345678, 0112345678, or +254712345678.');
 }
 
 async function getOrderTicketCodes(connection, orderId) {

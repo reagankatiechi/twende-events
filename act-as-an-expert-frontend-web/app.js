@@ -1,3 +1,12 @@
+function normalizeKenyanPhoneNumber(value) {
+  const digits = String(value || '').trim().replace(/\D/g, '');
+  let normalized = '';
+  if (/^0[17]\d{8}$/.test(digits)) normalized = `254${digits.slice(1)}`;
+  else if (/^[17]\d{8}$/.test(digits)) normalized = `254${digits}`;
+  else if (/^254[17]\d{8}$/.test(digits)) normalized = digits;
+  return /^254[17]\d{8}$/.test(normalized) ? normalized : null;
+}
+
 // Shared account routing guards, admin passcode gate, and "My tickets" navigation.
 (() => {
   const pageName = window.location.pathname.split('/').pop() || 'index.html';
@@ -242,7 +251,8 @@ if (checkoutCard) {
     }
 
     const ticket = selectedTiers[0];
-    const localPhone = String(user.phone_number || user.phone || '').replace(/\D/g, '').replace(/^254/, '').replace(/^0/, '').slice(-9);
+    const normalizedPhone = normalizeKenyanPhoneNumber(user.phone_number || user.phone);
+    const localPhone = normalizedPhone ? normalizedPhone.slice(3) : '';
     const eventName = document.querySelector('#event-title')?.textContent.replace(/\s+/g, ' ').trim() || 'Twende Event';
     checkoutFeedback.textContent = '';
     window.twendeMpesaCheckout?.open({
@@ -1309,12 +1319,13 @@ loadEventDetails();
     if (!checkoutContext || activePayment) return;
     submitError.hidden = true;
     submitError.textContent = '';
-    const localPhone = String(form.elements.phone.value || '').replace(/\D/g, '');
-    if (!/^\d{9}$/.test(localPhone)) {
-      submitError.textContent = 'Enter the nine digits after +254.';
+    const normalizedPhone = normalizeKenyanPhoneNumber(form.elements.phone.value);
+    if (!normalizedPhone) {
+      submitError.textContent = 'Enter a valid Kenyan number: 07XXXXXXXX, 01XXXXXXXX, or 254[17]XXXXXXXX.';
       submitError.hidden = false;
       return;
     }
+    const localPhone = normalizedPhone.slice(3);
     payButton.disabled = true;
     payButton.setAttribute('aria-busy', 'true');
     waitTitle.textContent = 'Starting your payment...';
@@ -1333,7 +1344,7 @@ loadEventDetails();
           quantity: checkoutContext.quantity,
           attendee_name: checkoutContext.attendeeName,
           attendee_email: checkoutContext.attendeeEmail,
-          phone_number: `+254${localPhone}`
+          phone_number: normalizedPhone
         })
       });
       const result = await response.json().catch(() => ({}));
