@@ -186,6 +186,39 @@ function isValidAdminToken(token) {
         return claims.role === 'admin' && Number(claims.exp) > Math.floor(Date.now() / 1000);
     } catch (_) { return false; }
 }
+const getUserTokenSecret = () => process.env.AUTH_TOKEN_SECRET || getAdminPasscode();
+function createUserToken(user) {
+    const payload = Buffer.from(JSON.stringify({
+        user_id: Number(user.user_id),
+        email: String(user.email || '').toLowerCase(),
+        role: String(user.role || 'user').toLowerCase(),
+        exp: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60
+    })).toString('base64url');
+    const signature = createHmac('sha256', getUserTokenSecret()).update(payload).digest('base64url');
+    return `${payload}.${signature}`;
+}
+function verifyUserToken(token) {
+    if (typeof token !== 'string') return null;
+    const [payload, signature, extra] = token.split('.');
+    if (!payload || !signature || extra) return null;
+    const expected = createHmac('sha256', getUserTokenSecret()).update(payload).digest();
+    let supplied;
+    try { supplied = Buffer.from(signature, 'base64url'); } catch (_) { return null; }
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return null;
+    try {
+        const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+        if (!Number.isSafeInteger(Number(claims.user_id)) || Number(claims.user_id) < 1
+            || !claims.email || Number(claims.exp) <= Math.floor(Date.now() / 1000)) return null;
+        return { ...claims, user_id: Number(claims.user_id) };
+    } catch (_) { return null; }
+}
+function authenticateUser(req, res, next) {
+    const bearer = /^Bearer\s+(.+)$/i.exec(req.get('authorization') || '');
+    const user = verifyUserToken(bearer?.[1]);
+    if (!user) return res.status(401).json({ error: 'Please sign in again to continue.' });
+    req.authUser = user;
+    return next();
+}
 function requireAdminAccess(req, res, next) {
     const bearer = /^Bearer\s+(.+)$/i.exec(req.get('authorization') || '');
     const token = req.get('x-admin-token') || (bearer && bearer[1]);
@@ -244,6 +277,21 @@ async function payHeroRequest(url, options = {}) {
 async function fetchPayHeroTransactionStatus(reference) {
     const query = new URLSearchParams({ reference: String(reference) });
     return payHeroRequest(`https://backend.payhero.co.ke/api/v2/transaction-status?${query}`, { method: 'GET' });
+}
+
+function readPayHeroStatus(data) {
+    const nested = data?.response && typeof data.response === 'object' ? data.response : {};
+    const statuses = [data?.status, data?.Status, nested.status, nested.Status]
+        .filter((value) => value != null && String(value).trim())
+        .map((value) => String(value).trim().toUpperCase());
+    const resultCodes = [data?.ResultCode, data?.resultCode, data?.result_code, nested.ResultCode, nested.resultCode, nested.result_code];
+    const paid = statuses.some((status) => status === 'SUCCESS' || status === 'COMPLETED')
+        || resultCodes.some((code) => code != null && String(code).trim() !== '' && Number(code) === 0);
+    const failed = statuses.some((status) => ['FAILED', 'CANCELLED', 'CANCELED', 'EXPIRED', 'REJECTED'].includes(status));
+    const receipt = data?.provider_reference || data?.MpesaReceiptNumber || data?.mpesa_receipt_number
+        || nested.provider_reference || nested.MpesaReceiptNumber || nested.mpesa_receipt_number || null;
+    const failureReason = data?.ResultDesc || data?.result_desc || nested.ResultDesc || nested.result_desc || null;
+    return { paid, failed, statuses, receipt, failureReason };
 }
 
 function normalizeKenyanPhone(phone) {
@@ -339,13 +387,14 @@ async function fulfillPaidOrder(orderId, mpesaReceipt = null) {
     }
 }
 
-async function markOrderFailed(externalReference, reason) {
+async function markOrderFailed(orderIdentifier, reason) {
     const connection = await pool.getConnection();
     try {
         await connection.beginTransaction();
         const [orders] = await connection.query(
-            `SELECT order_id, payment_status FROM Orders WHERE external_reference = ? LIMIT 1 FOR UPDATE`,
-            [externalReference]
+            `SELECT order_id, payment_status FROM Orders
+             WHERE external_reference = ? OR order_id = ? LIMIT 1 FOR UPDATE`,
+            [String(orderIdentifier), /^\d+$/.test(String(orderIdentifier)) ? Number(orderIdentifier) : null]
         );
         if (!orders.length) {
             await connection.rollback();
@@ -369,17 +418,20 @@ async function markOrderFailed(externalReference, reason) {
     }
 }
 
-app.post('/api/payments/stk-push', async (req, res) => {
+app.post('/api/payments/stk-push', authenticateUser, async (req, res) => {
     const {
         user_id: rawUserId, event_id: rawEventId, tier_id: rawTierId, quantity: rawQuantity,
-        attendee_name: rawAttendeeName, attendee_email: rawAttendeeEmail, phone_number: rawPhone
+        attendee_name: rawAttendeeName, attendee_email: rawAttendeeEmail, email: rawEmail, phone_number: rawPhone
     } = req.body || {};
-    const userId = Number(rawUserId);
+    const userId = req.authUser.user_id;
+    if (rawUserId != null && Number(rawUserId) !== userId) {
+        return res.status(403).json({ error: 'The signed-in account does not match this checkout.' });
+    }
     const eventId = Number(rawEventId);
     const tierId = Number(rawTierId);
     const quantity = Number(rawQuantity);
     const attendeeName = String(rawAttendeeName || '').trim();
-    const attendeeEmail = String(rawAttendeeEmail || '').trim();
+    const attendeeEmail = String(req.authUser.email || rawAttendeeEmail || rawEmail || '').trim().toLowerCase();
 
     if (![userId, eventId, tierId].every((value) => Number.isSafeInteger(value) && value > 0)
         || !Number.isSafeInteger(quantity) || quantity < 1 || quantity > 10
@@ -506,25 +558,31 @@ app.post('/api/payments/payhero-callback', async (req, res) => {
     try {
         const body = req.body || {};
         const payload = body.response || body;
-        const externalReference = payload.ExternalReference || payload.external_reference || body.external_reference;
-        const payheroReference = payload.CheckoutRequestID || payload.reference || body.reference;
-        const statusRaw = String(payload.Status || payload.status || body.status || '').toUpperCase();
+        const externalReference = payload.ExternalReference || payload.external_reference || body.ExternalReference || body.external_reference;
+        const payheroReference = payload.CheckoutRequestID || payload.reference || body.CheckoutRequestID || body.reference;
+        const statusRaw = String(payload.Status || payload.status || body.Status || body.status || '').toUpperCase();
         const mpesaReceipt = payload.MpesaReceiptNumber || payload.mpesa_receipt_number || payload.provider_reference
             || body.MpesaReceiptNumber || body.mpesa_receipt_number || body.provider_reference || null;
         const resultCode = payload.ResultCode ?? payload.result_code ?? body.ResultCode ?? body.result_code;
         const isPaid = ['SUCCESS', 'COMPLETED'].includes(statusRaw) || Number(resultCode) === 0;
         const failedStatuses = ['FAILED', 'CANCELLED', 'CANCELED', 'EXPIRED', 'REJECTED'];
+        const isFailed = failedStatuses.includes(statusRaw);
 
-        if (!externalReference) {
-            console.warn('PayHero callback has no external reference.');
+        if (!externalReference && !payheroReference) {
+            console.warn('PayHero callback has no external or PayHero reference.');
         } else {
             const [orders] = await pool.query(
-                `SELECT order_id, payment_status, payhero_reference, payhero_checkout_request_id
-                 FROM Orders WHERE external_reference = ? LIMIT 1`,
-                [externalReference]
+                `SELECT order_id, external_reference, payment_status, payhero_reference, payhero_checkout_request_id
+                 FROM Orders
+                 WHERE external_reference IN (?, ?) OR payhero_reference IN (?, ?)
+                    OR payhero_checkout_request_id IN (?, ?)
+                 LIMIT 1`,
+                [externalReference || null, payheroReference || null,
+                    externalReference || null, payheroReference || null,
+                    externalReference || null, payheroReference || null]
             );
             if (!orders.length) {
-                console.warn('[PayHero Callback] No matching Twende order:', externalReference);
+                console.warn('[PayHero Callback] No matching Twende order:', externalReference || payheroReference);
             } else {
                 const order = orders[0];
                 if (payheroReference && !order.payhero_reference && !order.payhero_checkout_request_id) {
@@ -535,10 +593,10 @@ app.post('/api/payments/payhero-callback', async (req, res) => {
                 }
                 if (isPaid) {
                     await fulfillPaidOrder(order.order_id, mpesaReceipt);
-                } else if (failedStatuses.includes(statusRaw)) {
+                } else if (isFailed) {
                     const reason = payload.ResultDesc || payload.result_desc || body.ResultDesc || body.result_desc
                         || `PayHero reported ${statusRaw.toLowerCase()}.`;
-                    await markOrderFailed(externalReference, reason);
+                    await markOrderFailed(order.order_id, reason);
                 } else {
                     console.warn('[PayHero Callback] Non-terminal status received:', statusRaw || '(empty)');
                 }
@@ -580,25 +638,27 @@ app.get('/api/payments/status/:externalReference', async (req, res) => {
         }
 
         if (String(order.payment_status).toLowerCase() === 'pending') {
-            const reference = order.payhero_reference || order.payhero_checkout_request_id;
-            if (reference) {
-                try {
-                    const payHeroStatus = await fetchPayHeroTransactionStatus(reference);
-                    console.log('[PayHero Status]', JSON.stringify(payHeroStatus));
-                    const statusPayload = payHeroStatus.response || payHeroStatus;
-                    const statusRaw = String(statusPayload.status || statusPayload.Status || '').toUpperCase();
-                    const resultCode = statusPayload.ResultCode ?? statusPayload.result_code;
-                    if (['SUCCESS', 'COMPLETED'].includes(statusRaw) || Number(resultCode) === 0) {
-                        const receipt = statusPayload.provider_reference || statusPayload.MpesaReceiptNumber
-                            || statusPayload.mpesa_receipt_number || null;
-                        await fulfillPaidOrder(order.order_id, receipt);
-                    } else if (['FAILED', 'CANCELLED', 'CANCELED', 'EXPIRED', 'REJECTED'].includes(statusRaw)) {
-                        await markOrderFailed(order.external_reference || externalReference,
-                            statusPayload.ResultDesc || statusPayload.result_desc || 'M-Pesa payment failed or was cancelled.');
-                    }
-                } catch (statusError) {
-                    console.warn('PayHero status fallback is not available yet:', statusError.message);
+            const reference = order.payhero_reference || order.payhero_checkout_request_id || order.external_reference;
+            try {
+                const data = await fetchPayHeroTransactionStatus(reference);
+                console.log('[PayHero Status Check]', JSON.stringify(data));
+                const payHeroStatus = readPayHeroStatus(data);
+                if (payHeroStatus.paid) {
+                    const result = await fulfillPaidOrder(order.order_id, payHeroStatus.receipt);
+                    const receipt = result.mpesaReceipt || payHeroStatus.receipt || order.mpesa_receipt_number || null;
+                    return res.status(200).json({
+                        status: 'paid',
+                        payment_status: 'paid',
+                        mpesaReceipt: receipt,
+                        tickets: result.tickets || []
+                    });
                 }
+                if (payHeroStatus.failed) {
+                    await markOrderFailed(order.order_id,
+                        payHeroStatus.failureReason || 'M-Pesa payment failed or was cancelled.');
+                }
+            } catch (statusError) {
+                console.warn('PayHero status fallback is not available yet:', statusError.message);
             }
             const [updatedOrders] = await pool.query(
                 `SELECT order_id, payment_status, mpesa_receipt_number, payment_failure_reason
@@ -630,6 +690,44 @@ app.get('/api/payments/status/:externalReference', async (req, res) => {
     }
 });
 
+// Manual recovery job for pending STK orders if a PayHero webhook was delayed or missed.
+app.post('/api/payments/reconcile-pending', requireAdminAccess, async (req, res) => {
+    try {
+        const [orders] = await pool.query(
+            `SELECT order_id, external_reference, payhero_reference, payhero_checkout_request_id
+             FROM Orders
+             WHERE payment_status = 'pending'
+               AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+             ORDER BY created_at ASC`
+        );
+        let reconciled = 0;
+        let failed = 0;
+        const errors = [];
+        for (const order of orders) {
+            const reference = order.payhero_reference || order.payhero_checkout_request_id || order.external_reference;
+            try {
+                const data = await fetchPayHeroTransactionStatus(reference);
+                console.log('[PayHero Status Check]', JSON.stringify(data));
+                const status = readPayHeroStatus(data);
+                if (status.paid) {
+                    const result = await fulfillPaidOrder(order.order_id, status.receipt);
+                    if (result.status === 'paid') reconciled += 1;
+                } else if (status.failed) {
+                    await markOrderFailed(order.order_id, status.failureReason || 'M-Pesa payment failed or was cancelled.');
+                    failed += 1;
+                }
+            } catch (error) {
+                console.error(`[reconcile] Order ${order.order_id} status lookup failed:`, error.message);
+                errors.push({ order_id: order.order_id, message: error.message });
+            }
+        }
+        return res.status(200).json({ success: true, checked: orders.length, reconciled, failed, errors });
+    } catch (error) {
+        console.error('Pending payment reconciliation failed:', error);
+        return res.status(500).json({ success: false, error: 'Could not reconcile pending payments.' });
+    }
+});
+
 // User Login Route (Accepts Email OR Phone Number)
 app.post('/api/login', async (req, res) => {
     try {
@@ -649,7 +747,8 @@ app.post('/api/login', async (req, res) => {
 
         const user = users[0];
         const adminToken = String(user.role || '').toLowerCase() === 'admin' ? createAdminToken() : undefined;
-        res.status(200).json({ message: 'Login successful', user, ...(adminToken ? { adminToken } : {}) });
+        const token = createUserToken(user);
+        res.status(200).json({ message: 'Login successful', user, token, ...(adminToken ? { adminToken } : {}) });
     } catch (error) {
         console.error('Error during login:', error);
         res.status(500).json({ error: 'Server error during login' });
@@ -1078,14 +1177,18 @@ app.post('/api/tickets/mock-purchase', (req, res) => {
 });
 
 // 2. Fetch a user's purchased tickets
-app.get('/api/user/tickets/:userId', async (req, res) => {
+app.get('/api/user/tickets/:userId', authenticateUser, async (req, res) => {
     try {
-        const userId = req.params.userId;
+        const userId = req.authUser.user_id;
+        if (Number(req.params.userId) !== userId) {
+            return res.status(403).json({ error: 'You can only view tickets for your signed-in account.' });
+        }
+        const email = req.authUser.email;
         const [tickets] = await pool.query(
             `SELECT p.ticket_code,
                     CASE WHEN LOWER(COALESCE(p.status, '')) = 'used' OR COALESCE(t.is_scanned, 0) = 1 THEN 'used' ELSE 'valid' END AS status,
-                    p.purchase_date AS purchased_at,
-                    u.full_name AS attendee_name,
+                    COALESCE(p.purchase_date, o.created_at) AS purchased_at,
+                    COALESCE(NULLIF(o.attendee_name, ''), u.full_name) AS attendee_name,
                     e.title,
                     e.start_time,
                     e.venue,
@@ -1093,12 +1196,13 @@ app.get('/api/user/tickets/:userId', async (req, res) => {
                     tt.tier_name
              FROM Purchased_Tickets p
              JOIN Events e ON p.event_id = e.event_id
-             JOIN Users u ON u.user_id = p.user_id
              LEFT JOIN Tickets t ON t.ticket_code = p.ticket_code
+             LEFT JOIN Orders o ON o.order_id = t.order_id
+             LEFT JOIN Users u ON u.user_id = COALESCE(p.user_id, o.user_id)
              LEFT JOIN Ticket_Tiers tt ON tt.tier_id = t.tier_id
-             WHERE p.user_id = ?
+             WHERE p.user_id = ? OR o.user_id = ? OR LOWER(o.attendee_email) = LOWER(?)
              ORDER BY p.purchase_date DESC`,
-            [userId]
+            [userId, userId, email]
         );
         res.status(200).json(tickets);
     } catch (error) {

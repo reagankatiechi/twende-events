@@ -89,7 +89,7 @@
         user = null;
       }
 
-      if (!user) {
+      if (!user || !user.token) {
         window.location.replace('login.html?redirect=user-dashboard.html');
         return;
       }
@@ -170,8 +170,14 @@
         container.textContent = 'QR unavailable';
         return false;
       };
-      fetch(`${API_BASE_URL}/api/user/tickets/${encodeURIComponent(user.user_id)}`)
+      fetch(`${API_BASE_URL}/api/user/tickets/${encodeURIComponent(user.user_id)}`, {
+        headers: { Authorization: `Bearer ${user.token}` }
+      })
         .then((response) => {
+          if (response.status === 401) {
+            localStorage.removeItem('user');
+            window.location.replace('login.html?redirect=user-dashboard.html');
+          }
           if (!response.ok) throw new Error(`Ticket request failed (${response.status})`);
           return response.json();
         })

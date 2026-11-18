@@ -229,6 +229,10 @@ if (checkoutCard) {
       window.location.href = `login.html?redirect=${encodeURIComponent(`event-details.html?id=${eventId}`)}`;
       return;
     }
+    if (!user.token) {
+      window.location.href = `login.html?redirect=${encodeURIComponent(`event-details.html?id=${eventId}`)}`;
+      return;
+    }
     if (!user.user_id || !eventId) {
       checkoutFeedback.textContent = 'Your account or event could not be identified. Please try again.';
       return;
@@ -264,6 +268,7 @@ if (checkoutCard) {
       eventName,
       attendeeName: user.full_name,
       attendeeEmail: user.email,
+      authToken: user.token,
       phone: localPhone
     });
   });
@@ -1263,12 +1268,10 @@ loadEventDetails();
       elapsedSeconds = Math.floor((Date.now() - pollingStartedAt) / 1000);
       countdown.textContent = `00:${String(Math.max(0, 60 - elapsedSeconds)).padStart(2, '0')}`;
       if (elapsedSeconds >= 60) {
-        stopPolling();
         spinner.hidden = true;
         waitTitle.textContent = 'Still waiting for confirmation';
-        progressMessage.textContent = 'The payment is still pending. You can close this window and check My Tickets shortly.';
+        progressMessage.textContent = 'Your payment may still be processing. We will keep checking and update this screen as soon as it is confirmed.';
         countdownLabel.hidden = true;
-        return;
       }
       if (pollInProgress) return;
       pollInProgress = true;
@@ -1337,9 +1340,13 @@ loadEventDetails();
     try {
       const response = await fetch(`${API_BASE_URL}/api/payments/stk-push`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${checkoutContext.authToken}`
+        },
         body: JSON.stringify({
           user_id: checkoutContext.userId,
+          email: checkoutContext.attendeeEmail,
           event_id: checkoutContext.eventId,
           tier_id: checkoutContext.tierId,
           quantity: checkoutContext.quantity,
@@ -1606,7 +1613,7 @@ async function deleteUser(userId) {
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.message || data.error || 'Invalid phone number or password.');
 
-      localStorage.setItem('user', JSON.stringify(data.user));
+      localStorage.setItem('user', JSON.stringify({ ...data.user, token: data.token }));
       const userRole = String(data.user.role || '').toLowerCase();
       const requestedRedirect = new URLSearchParams(window.location.search).get('redirect');
       const allowedRedirects = new Set([
