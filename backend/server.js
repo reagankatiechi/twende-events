@@ -6,6 +6,13 @@ require('dotenv').config();
 const app = express();
 const multer = require('multer');
 const path = require('path');
+const cloudinary = require('cloudinary').v2;
+
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+});
 
 // Allow the configured GitHub Pages/static frontend origin(s); default to all origins for easy setup.
 const corsOrigins = process.env.CORS_ORIGINS
@@ -16,18 +23,33 @@ app.use(cors({ origin: corsOrigins }));
 // Allow the frontend to access uploaded images, including cross-origin canvas reads.
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Configure Multer storage
-const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        cb(null, 'uploads/'); // Save files to the uploads folder
-    },
-    filename: function (req, file, cb) {
-        // Create a unique filename: timestamp + original extension
-        cb(null, Date.now() + path.extname(file.originalname));
+// Keep poster uploads in memory so new files can be streamed to Cloudinary.
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype && file.mimetype.startsWith('image/')) {
+            return cb(null, true);
+        }
+        cb(new Error('Only image files are allowed'));
     }
 });
 
-const upload = multer({ storage: storage });
+function uploadPosterToCloudinary(buffer) {
+    return new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+            { folder: 'twende-events/posters', resource_type: 'image' },
+            (error, result) => {
+                if (error) return reject(error);
+                if (!result || !result.secure_url) {
+                    return reject(new Error('Cloudinary did not return a secure poster URL'));
+                }
+                resolve(result.secure_url);
+            }
+        );
+        stream.end(buffer);
+    });
+}
 
 // Middleware
 app.use(express.json()); // Allows us to parse JSON data from the frontend
@@ -264,7 +286,7 @@ app.post('/api/events', upload.single('poster'), async (req, res) => {
         const { title, category, description, venue, city, start_time, end_time } = req.body;
         const organizer_id = 1; 
         
-        const poster_url = req.file ? `/uploads/${req.file.filename}` : null;
+        const poster_url = req.file ? await uploadPosterToCloudinary(req.file.buffer) : null;
 
         // 1. Insert the main event
         const [eventResult] = await pool.query(
@@ -303,8 +325,10 @@ app.post('/api/events/create', upload.single('poster'), async (req, res) => {
     try {
         const { title, category, venue, start_time, description, organizer_id } = req.body;
         
-        // If an image was uploaded, create the URL path, otherwise use a default placeholder
-        const poster_url = req.file ? `/uploads/${req.file.filename}` : '/images/default-poster.jpg';
+        // If an image was uploaded, save its Cloudinary URL, otherwise use a default placeholder.
+        const poster_url = req.file
+            ? await uploadPosterToCloudinary(req.file.buffer)
+            : '/images/default-poster.jpg';
 
         await pool.query(
             `INSERT INTO Events (title, category, venue, start_time, description, poster_url, organizer_id, approval_status) 
