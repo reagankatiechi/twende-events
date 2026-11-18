@@ -114,9 +114,13 @@ async function ensurePaymentSchema() {
             },
             Purchased_Tickets: {
                 ticket_id: 'BIGINT NOT NULL AUTO_INCREMENT',
+                order_id: 'BIGINT NULL',
                 user_id: 'INT NULL',
                 event_id: 'INT NULL',
+                tier_id: 'INT NULL',
                 ticket_code: 'VARCHAR(100) NULL',
+                qr_code_data: 'TEXT NULL',
+                attendee_name: 'VARCHAR(255) NULL',
                 status: "VARCHAR(32) NOT NULL DEFAULT 'valid'",
                 purchase_date: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP'
             },
@@ -242,11 +246,11 @@ app.post('/api/admin/verify-passcode', (req, res) => {
 app.use('/api/admin', requireAdminAccess);
 
 function payHeroAuthorization() {
-    if (process.env.PAYHERO_AUTH_TOKEN) return process.env.PAYHERO_AUTH_TOKEN;
     const username = process.env.PAYHERO_API_USERNAME;
     const password = process.env.PAYHERO_API_PASSWORD;
-    if (!username || !password) throw new Error('PayHero API credentials are not configured');
-    return `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
+    if (username && password) return `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
+    if (process.env.PAYHERO_AUTH_TOKEN) return process.env.PAYHERO_AUTH_TOKEN;
+    throw new Error('PayHero API credentials are not configured');
 }
 
 async function payHeroRequest(url, options = {}) {
@@ -314,37 +318,48 @@ async function reconcilePendingOrdersForUser(user) {
     const lastNine = lastNinePhoneDigits(account.phone_number || user.phone_number);
     const phonePattern = lastNine ? `%${lastNine}` : '__NO_PHONE_MATCH__';
     const [orders] = await pool.query(
-        `SELECT order_id, user_id, external_reference, payhero_reference, payhero_checkout_request_id
-         FROM Orders
-         WHERE payment_status = 'pending'
-           AND created_at >= DATE_SUB(NOW(), INTERVAL 48 HOUR)
-           AND (user_id = ? OR (user_id IS NULL AND (
-                RIGHT(REPLACE(COALESCE(NULLIF(phone_number, ''), checkout_phone), '+', ''), 9) = ?
-                OR phone_number LIKE ? OR checkout_phone LIKE ?
+        `SELECT o.order_id, o.user_id, o.external_reference, o.payhero_reference,
+                o.payhero_checkout_request_id, o.payment_status, o.mpesa_receipt_number
+         FROM Orders o
+         WHERE (
+             (o.payment_status = 'pending' AND o.created_at >= DATE_SUB(NOW(), INTERVAL 48 HOUR))
+             OR (o.payment_status = 'paid' AND NOT EXISTS (
+                SELECT 1 FROM Purchased_Tickets p
+                WHERE p.order_id = o.order_id
+                   OR EXISTS (SELECT 1 FROM Tickets t WHERE t.order_id = o.order_id AND t.ticket_code = p.ticket_code)
+             ))
+           )
+           AND (o.user_id = ? OR (o.user_id IS NULL AND (
+                RIGHT(REPLACE(COALESCE(NULLIF(o.phone_number, ''), o.checkout_phone), '+', ''), 9) = ?
+                OR o.phone_number LIKE ? OR o.checkout_phone LIKE ?
            )))
-         ORDER BY created_at ASC`,
+         ORDER BY o.created_at ASC`,
         [userId, lastNine || '__NO_PHONE_MATCH__', phonePattern, phonePattern]
     );
 
     let reconciled = 0;
     for (const order of orders) {
-        const reference = order.payhero_reference || order.payhero_checkout_request_id || order.external_reference;
-        if (!reference) continue;
         try {
-            const data = await fetchPayHeroTransactionStatus(reference);
-            console.log('[PayHero Status Check]', JSON.stringify(data));
-            const status = readPayHeroStatus(data);
-            if (!status.paid) continue;
+            let receipt = order.mpesa_receipt_number || null;
+            if (String(order.payment_status).toLowerCase() !== 'paid') {
+                const reference = order.payhero_reference || order.payhero_checkout_request_id || order.external_reference;
+                if (!reference) continue;
+                const data = await fetchPayHeroTransactionStatus(reference);
+                console.log('[PayHero Status Check]', JSON.stringify(data));
+                const status = readPayHeroStatus(data);
+                if (!status.paid) continue;
+                receipt = status.receipt || receipt;
+            }
             if (order.user_id == null) {
                 await pool.query(
                     `UPDATE Orders SET user_id = ? WHERE order_id = ? AND user_id IS NULL`,
                     [userId, order.order_id]
                 );
             }
-            const result = await fulfillPaidOrder(order.order_id, status.receipt);
+            const result = await fulfillPaidOrder(order.order_id, receipt);
             if (result.status === 'paid') reconciled += 1;
         } catch (error) {
-            console.warn(`[reconcile] User ${userId}, order ${order.order_id} could not be reconciled:`, error.message);
+            console.error(`[reconcile] User ${userId}, order ${order.order_id} could not be reconciled:`, error);
         }
     }
     return { checked: orders.length, reconciled };
@@ -365,13 +380,54 @@ function normalizeKenyanPhone(phone) {
 async function getOrderTicketCodes(connection, orderId) {
     const [tickets] = await connection.query(
         `SELECT p.ticket_code
-         FROM Tickets t
-         JOIN Purchased_Tickets p ON p.ticket_code = t.ticket_code
-         WHERE t.order_id = ?
-         ORDER BY t.ticket_id ASC`,
-        [orderId]
+         FROM Purchased_Tickets p
+         LEFT JOIN Tickets t ON p.ticket_code = t.ticket_code
+         WHERE p.order_id = ? OR t.order_id = ?
+         ORDER BY COALESCE(t.ticket_id, p.ticket_id) ASC`,
+        [orderId, orderId]
     );
     return tickets.map((ticket) => ticket.ticket_code);
+}
+
+async function insertPurchasedTicket(connection, order, ticketCode, ticketColumns) {
+    const valuesByColumn = {
+        order_id: order.order_id,
+        user_id: order.user_id,
+        event_id: order.event_id,
+        tier_id: order.tier_id,
+        ticket_code: ticketCode,
+        qr_code_data: ticketCode,
+        attendee_name: order.attendee_name || 'Guest',
+        status: 'valid',
+        purchase_date: new Date(),
+        created_at: new Date(),
+        updated_at: new Date()
+    };
+    const availableColumns = ticketColumns.filter((column) => Object.hasOwn(valuesByColumn, column.COLUMN_NAME));
+    const requiredWithoutValue = ticketColumns.filter((column) =>
+        column.IS_NULLABLE === 'NO'
+        && column.COLUMN_DEFAULT == null
+        && !String(column.EXTRA || '').toLowerCase().includes('auto_increment')
+        && !String(column.EXTRA || '').toLowerCase().includes('generated')
+        && !Object.hasOwn(valuesByColumn, column.COLUMN_NAME)
+    );
+    if (requiredWithoutValue.length) {
+        throw new Error(`Purchased_Tickets has required columns without fulfillment values: ${requiredWithoutValue.map((column) => column.COLUMN_NAME).join(', ')}`);
+    }
+    if (!availableColumns.some((column) => column.COLUMN_NAME === 'ticket_code')) {
+        throw new Error('Purchased_Tickets.ticket_code is missing; cannot create a gate-scannable ticket.');
+    }
+
+    const names = availableColumns.map((column) => column.COLUMN_NAME);
+    const placeholders = names.map(() => '?').join(', ');
+    const quotedNames = names.map((name) => `\`${name.replace(/`/g, '``')}\``).join(', ');
+    const parameters = availableColumns.map((column) => {
+        const value = valuesByColumn[column.COLUMN_NAME];
+        return String(column.DATA_TYPE || '').toLowerCase() === 'json' && column.COLUMN_NAME === 'qr_code_data'
+            ? JSON.stringify({ ticket_code: ticketCode })
+            : value;
+    });
+    await connection.query(`INSERT INTO Purchased_Tickets (${quotedNames}) VALUES (${placeholders})`, parameters);
 }
 
 // A locked order row makes callbacks and status polling share one idempotent issuer.
@@ -381,6 +437,7 @@ async function fulfillPaidOrder(orderId, mpesaReceipt = null) {
         await connection.beginTransaction();
         const [orders] = await connection.query(
             `SELECT order_id, user_id, event_id, total_amount, tier_id, quantity, payment_status,
+                    attendee_name,
                     mpesa_receipt_number
              FROM Orders WHERE order_id = ? LIMIT 1 FOR UPDATE`,
             [orderId]
@@ -391,10 +448,15 @@ async function fulfillPaidOrder(orderId, mpesaReceipt = null) {
         }
 
         const order = orders[0];
-        if (String(order.payment_status).toLowerCase() === 'paid') {
-            const tickets = await getOrderTicketCodes(connection, order.order_id);
+        const alreadyPaid = String(order.payment_status).toLowerCase() === 'paid';
+        const existingTicketCodes = alreadyPaid ? await getOrderTicketCodes(connection, order.order_id) : [];
+        const ticketQuantity = Number(order.quantity || 1);
+        if (!Number.isSafeInteger(ticketQuantity) || ticketQuantity < 1) {
+            throw new Error(`Order ${order.order_id} has an invalid ticket quantity`);
+        }
+        if (alreadyPaid && existingTicketCodes.length >= ticketQuantity) {
             await connection.commit();
-            return { found: true, status: 'paid', mpesaReceipt: order.mpesa_receipt_number || mpesaReceipt || null, tickets };
+            return { found: true, status: 'paid', mpesaReceipt: order.mpesa_receipt_number || mpesaReceipt || null, tickets: existingTicketCodes };
         }
 
         const [tierRows] = await connection.query(
@@ -402,16 +464,12 @@ async function fulfillPaidOrder(orderId, mpesaReceipt = null) {
             [order.tier_id, order.event_id]
         );
         if (!tierRows.length) throw new Error('The ticket tier for this paid order no longer exists');
-
-        const ticketQuantity = Number(order.quantity || 1);
-        if (!Number.isSafeInteger(ticketQuantity) || ticketQuantity < 1) {
-            throw new Error(`Order ${order.order_id} has an invalid ticket quantity`);
+        if (!alreadyPaid) {
+            await connection.query(
+                `UPDATE Ticket_Tiers SET quantity_sold = COALESCE(quantity_sold, 0) + ? WHERE tier_id = ?`,
+                [ticketQuantity, order.tier_id]
+            );
         }
-
-        await connection.query(
-            `UPDATE Ticket_Tiers SET quantity_sold = COALESCE(quantity_sold, 0) + ? WHERE tier_id = ?`,
-            [ticketQuantity, order.tier_id]
-        );
         await connection.query(
             `UPDATE Orders
              SET payment_status = 'paid', mpesa_receipt_number = COALESCE(?, mpesa_receipt_number),
@@ -420,14 +478,18 @@ async function fulfillPaidOrder(orderId, mpesaReceipt = null) {
             [mpesaReceipt, order.order_id]
         );
 
-        const ticketCodes = [];
-        for (let index = 0; index < ticketQuantity; index += 1) {
+        const [ticketColumns] = await connection.query(
+            `SELECT COLUMN_NAME, IS_NULLABLE, COLUMN_DEFAULT, EXTRA, DATA_TYPE
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'Purchased_Tickets'`,
+            [process.env.DB_NAME || 'defaultdb']
+        );
+        const ticketCodes = [...existingTicketCodes];
+        const missingTicketCount = Math.max(0, ticketQuantity - existingTicketCodes.length);
+        for (let index = 0; index < missingTicketCount; index += 1) {
             const ticketCode = randomUUID();
             ticketCodes.push(ticketCode);
-            await connection.query(
-                `INSERT INTO Purchased_Tickets (user_id, event_id, ticket_code) VALUES (?, ?, ?)`,
-                [order.user_id, order.event_id, ticketCode]
-            );
+            await insertPurchasedTicket(connection, order, ticketCode, ticketColumns);
             await connection.query(
                 `INSERT INTO Tickets (order_id, tier_id, user_id, ticket_code, is_scanned, created_at) VALUES (?, ?, ?, ?, 0, NOW())`,
                 [order.order_id, order.tier_id, order.user_id, ticketCode]
@@ -724,7 +786,7 @@ app.get('/api/payments/status/:externalReference', authenticateUser, async (req,
                         payHeroStatus.failureReason || 'M-Pesa payment failed or was cancelled.');
                 }
             } catch (statusError) {
-                console.warn('PayHero status fallback is not available yet:', statusError.message);
+                console.error(`[PayHero Status Check] Failed for order ${order.order_id}:`, statusError);
             }
             const [updatedOrders] = await pool.query(
                 `SELECT order_id, payment_status, mpesa_receipt_number, payment_failure_reason
@@ -1257,7 +1319,7 @@ app.get('/api/user/tickets/:userId', authenticateUser, async (req, res) => {
             `SELECT p.ticket_code,
                     CASE WHEN LOWER(COALESCE(p.status, '')) = 'used' OR COALESCE(t.is_scanned, 0) = 1 THEN 'used' ELSE 'valid' END AS status,
                     COALESCE(p.purchase_date, o.created_at) AS purchased_at,
-                    COALESCE(NULLIF(o.attendee_name, ''), u.full_name) AS attendee_name,
+                    COALESCE(NULLIF(p.attendee_name, ''), NULLIF(o.attendee_name, ''), u.full_name) AS attendee_name,
                     e.title,
                     e.start_time,
                     e.venue,
@@ -1266,9 +1328,9 @@ app.get('/api/user/tickets/:userId', authenticateUser, async (req, res) => {
              FROM Purchased_Tickets p
              JOIN Events e ON p.event_id = e.event_id
              LEFT JOIN Tickets t ON t.ticket_code = p.ticket_code
-             LEFT JOIN Orders o ON o.order_id = t.order_id
+             LEFT JOIN Orders o ON o.order_id = COALESCE(t.order_id, p.order_id)
              LEFT JOIN Users u ON u.user_id = COALESCE(p.user_id, o.user_id)
-             LEFT JOIN Ticket_Tiers tt ON tt.tier_id = t.tier_id
+             LEFT JOIN Ticket_Tiers tt ON tt.tier_id = COALESCE(t.tier_id, p.tier_id)
              WHERE p.user_id = ?
                 OR o.user_id = ?
                 OR LOWER(o.attendee_email) = LOWER(?)
