@@ -1276,7 +1276,9 @@ loadEventDetails();
       if (pollInProgress) return;
       pollInProgress = true;
       try {
-        const response = await fetch(`${API_BASE_URL}/api/payments/status/${encodeURIComponent(externalReference)}`);
+        const response = await fetch(`${API_BASE_URL}/api/payments/status/${encodeURIComponent(externalReference)}`, {
+          headers: { Authorization: `Bearer ${activePayment.context.authToken}` }
+        });
         const result = await response.json().catch(() => ({}));
         const paymentState = String(result.status || result.payment_status || '').trim().toLowerCase();
         if (response.ok && ['paid', 'success', 'completed'].includes(paymentState)) {

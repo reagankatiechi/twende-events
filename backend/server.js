@@ -217,6 +217,7 @@ function authenticateUser(req, res, next) {
     const user = verifyUserToken(bearer?.[1]);
     if (!user) return res.status(401).json({ error: 'Please sign in again to continue.' });
     req.authUser = user;
+    req.user = user;
     return next();
 }
 function requireAdminAccess(req, res, next) {
@@ -241,6 +242,7 @@ app.post('/api/admin/verify-passcode', (req, res) => {
 app.use('/api/admin', requireAdminAccess);
 
 function payHeroAuthorization() {
+    if (process.env.PAYHERO_AUTH_TOKEN) return process.env.PAYHERO_AUTH_TOKEN;
     const username = process.env.PAYHERO_API_USERNAME;
     const password = process.env.PAYHERO_API_PASSWORD;
     if (!username || !password) throw new Error('PayHero API credentials are not configured');
@@ -288,10 +290,64 @@ function readPayHeroStatus(data) {
     const paid = statuses.some((status) => status === 'SUCCESS' || status === 'COMPLETED')
         || resultCodes.some((code) => code != null && String(code).trim() !== '' && Number(code) === 0);
     const failed = statuses.some((status) => ['FAILED', 'CANCELLED', 'CANCELED', 'EXPIRED', 'REJECTED'].includes(status));
-    const receipt = data?.provider_reference || data?.MpesaReceiptNumber || data?.mpesa_receipt_number
-        || nested.provider_reference || nested.MpesaReceiptNumber || nested.mpesa_receipt_number || null;
+    const receipt = data?.provider_reference || data?.third_party_reference || data?.MpesaReceiptNumber || data?.mpesa_receipt_number
+        || nested.provider_reference || nested.third_party_reference || nested.MpesaReceiptNumber || nested.mpesa_receipt_number || null;
     const failureReason = data?.ResultDesc || data?.result_desc || nested.ResultDesc || nested.result_desc || null;
     return { paid, failed, statuses, receipt, failureReason };
+}
+
+function lastNinePhoneDigits(value) {
+    const digits = String(value || '').replace(/\D/g, '');
+    return digits.length >= 9 ? digits.slice(-9) : '';
+}
+
+async function reconcilePendingOrdersForUser(user) {
+    const userId = Number(user?.user_id ?? user?.id);
+    if (!Number.isSafeInteger(userId) || userId < 1) return { checked: 0, reconciled: 0 };
+
+    const [users] = await pool.query(
+        `SELECT user_id, phone_number, email FROM Users WHERE user_id = ? LIMIT 1`,
+        [userId]
+    );
+    const account = users[0];
+    if (!account) return { checked: 0, reconciled: 0 };
+    const lastNine = lastNinePhoneDigits(account.phone_number || user.phone_number);
+    const phonePattern = lastNine ? `%${lastNine}` : '__NO_PHONE_MATCH__';
+    const [orders] = await pool.query(
+        `SELECT order_id, user_id, external_reference, payhero_reference, payhero_checkout_request_id
+         FROM Orders
+         WHERE payment_status = 'pending'
+           AND created_at >= DATE_SUB(NOW(), INTERVAL 48 HOUR)
+           AND (user_id = ? OR (user_id IS NULL AND (
+                RIGHT(REPLACE(COALESCE(NULLIF(phone_number, ''), checkout_phone), '+', ''), 9) = ?
+                OR phone_number LIKE ? OR checkout_phone LIKE ?
+           )))
+         ORDER BY created_at ASC`,
+        [userId, lastNine || '__NO_PHONE_MATCH__', phonePattern, phonePattern]
+    );
+
+    let reconciled = 0;
+    for (const order of orders) {
+        const reference = order.payhero_reference || order.payhero_checkout_request_id || order.external_reference;
+        if (!reference) continue;
+        try {
+            const data = await fetchPayHeroTransactionStatus(reference);
+            console.log('[PayHero Status Check]', JSON.stringify(data));
+            const status = readPayHeroStatus(data);
+            if (!status.paid) continue;
+            if (order.user_id == null) {
+                await pool.query(
+                    `UPDATE Orders SET user_id = ? WHERE order_id = ? AND user_id IS NULL`,
+                    [userId, order.order_id]
+                );
+            }
+            const result = await fulfillPaidOrder(order.order_id, status.receipt);
+            if (result.status === 'paid') reconciled += 1;
+        } catch (error) {
+            console.warn(`[reconcile] User ${userId}, order ${order.order_id} could not be reconciled:`, error.message);
+        }
+    }
+    return { checked: orders.length, reconciled };
 }
 
 function normalizeKenyanPhone(phone) {
@@ -498,10 +554,10 @@ app.post('/api/payments/stk-push', authenticateUser, async (req, res) => {
         const externalReference = `TWENDE-${Date.now()}-${randomUUID().toUpperCase()}`;
         const [insertResult] = await connection.query(
             `INSERT INTO Orders
-                (user_id, event_id, total_amount, checkout_phone, payment_status, external_reference,
+                (user_id, event_id, total_amount, checkout_phone, phone_number, payment_status, external_reference,
                  tier_id, quantity, attendee_name, attendee_email, created_at)
-             VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, NOW())`,
-            [userId, eventId, totalAmount, phoneNumber, externalReference, tierId, quantity, attendeeName, attendeeEmail]
+             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, NOW())`,
+            [userId, eventId, totalAmount, phoneNumber, phoneNumber, externalReference, tierId, quantity, attendeeName, attendeeEmail]
         );
         order = { orderId: insertResult.insertId, externalReference, totalAmount, eventId, tierId, quantity, attendeeName };
         await connection.commit();
@@ -609,11 +665,13 @@ app.post('/api/payments/payhero-callback', async (req, res) => {
     return res.status(200).json({ received: true });
 });
 
-app.get('/api/payments/status/:externalReference', async (req, res) => {
+app.get('/api/payments/status/:externalReference', authenticateUser, async (req, res) => {
     const externalReference = String(req.params.externalReference || '');
     try {
+        await reconcilePendingOrdersForUser(req.user);
         const [orders] = await pool.query(
-            `SELECT order_id, external_reference, payment_status, mpesa_receipt_number, payment_failure_reason,
+            `SELECT order_id, external_reference, user_id, attendee_email, phone_number, checkout_phone,
+                    payment_status, mpesa_receipt_number, payment_failure_reason,
                     payhero_reference, payhero_checkout_request_id
              FROM Orders
              WHERE external_reference = ? OR order_id = ?
@@ -623,6 +681,14 @@ app.get('/api/payments/status/:externalReference', async (req, res) => {
         );
         if (!orders.length) return res.status(404).json({ error: 'Payment order not found.' });
         let order = orders[0];
+        const [accountRows] = await pool.query(`SELECT phone_number FROM Users WHERE user_id = ? LIMIT 1`, [req.user.user_id]);
+        const sameAccount = Number(order.user_id) === req.user.user_id;
+        const sameEmail = String(order.attendee_email || '').toLowerCase() === req.user.email;
+        const orderPhone = lastNinePhoneDigits(order.phone_number || order.checkout_phone);
+        const samePhone = Boolean(orderPhone && orderPhone === lastNinePhoneDigits(accountRows[0]?.phone_number));
+        if (!sameAccount && !sameEmail && !samePhone) {
+            return res.status(403).json({ error: 'This payment does not belong to your account.' });
+        }
 
         if (String(order.payment_status).toLowerCase() === 'paid') {
             const connection = await pool.getConnection();
@@ -1183,7 +1249,10 @@ app.get('/api/user/tickets/:userId', authenticateUser, async (req, res) => {
         if (Number(req.params.userId) !== userId) {
             return res.status(403).json({ error: 'You can only view tickets for your signed-in account.' });
         }
+        await reconcilePendingOrdersForUser(req.user);
+        const [accountRows] = await pool.query(`SELECT phone_number FROM Users WHERE user_id = ? LIMIT 1`, [userId]);
         const email = req.authUser.email;
+        const phoneDigits = lastNinePhoneDigits(accountRows[0]?.phone_number);
         const [tickets] = await pool.query(
             `SELECT p.ticket_code,
                     CASE WHEN LOWER(COALESCE(p.status, '')) = 'used' OR COALESCE(t.is_scanned, 0) = 1 THEN 'used' ELSE 'valid' END AS status,
@@ -1200,9 +1269,12 @@ app.get('/api/user/tickets/:userId', authenticateUser, async (req, res) => {
              LEFT JOIN Orders o ON o.order_id = t.order_id
              LEFT JOIN Users u ON u.user_id = COALESCE(p.user_id, o.user_id)
              LEFT JOIN Ticket_Tiers tt ON tt.tier_id = t.tier_id
-             WHERE p.user_id = ? OR o.user_id = ? OR LOWER(o.attendee_email) = LOWER(?)
+             WHERE p.user_id = ?
+                OR o.user_id = ?
+                OR LOWER(o.attendee_email) = LOWER(?)
+                OR (o.user_id IS NULL AND RIGHT(REPLACE(COALESCE(NULLIF(o.phone_number, ''), o.checkout_phone), '+', ''), 9) = ?)
              ORDER BY p.purchase_date DESC`,
-            [userId, userId, email]
+            [userId, userId, email, phoneDigits || '__NO_PHONE_MATCH__']
         );
         res.status(200).json(tickets);
     } catch (error) {
