@@ -64,7 +64,7 @@ const pool = mysql.createPool({
     port: process.env.DB_PORT,
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
+    database: process.env.DB_NAME || 'defaultdb',
     ssl: {
         rejectUnauthorized: false
     },
@@ -72,6 +72,99 @@ const pool = mysql.createPool({
     connectionLimit: 10,
     queueLimit: 0
 });
+
+// Adds payment/ticket columns required by checkout without changing columns
+// that already exist in an active deployment.
+async function ensurePaymentSchema() {
+    const databaseName = process.env.DB_NAME || 'defaultdb';
+    const connection = await pool.getConnection();
+    try {
+        const tableColumns = new Map();
+        for (const tableName of ['Orders', 'Purchased_Tickets', 'Ticket_Tiers']) {
+            const [columns] = await connection.query(
+                `SELECT COLUMN_NAME, IS_NULLABLE, COLUMN_KEY
+                 FROM INFORMATION_SCHEMA.COLUMNS
+                 WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?`,
+                [databaseName, tableName]
+            );
+            tableColumns.set(tableName, columns);
+        }
+
+        const definitions = {
+            Orders: {
+                order_id: 'BIGINT NOT NULL AUTO_INCREMENT',
+                user_id: 'INT NULL',
+                event_id: 'INT NULL',
+                total_amount: 'DECIMAL(12,2) NOT NULL DEFAULT 0',
+                tier_id: 'INT NULL',
+                quantity: 'INT NOT NULL DEFAULT 1',
+                checkout_phone: 'VARCHAR(32) NULL',
+                phone_number: 'VARCHAR(32) NULL',
+                external_reference: 'VARCHAR(100) NULL',
+                payhero_reference: 'VARCHAR(100) NULL',
+                payhero_checkout_request_id: 'VARCHAR(100) NULL',
+                mpesa_receipt_number: 'VARCHAR(100) NULL',
+                payment_status: "VARCHAR(32) NOT NULL DEFAULT 'pending'",
+                failure_reason: 'TEXT NULL',
+                payment_failure_reason: 'TEXT NULL',
+                attendee_name: 'VARCHAR(255) NULL',
+                attendee_email: 'VARCHAR(255) NULL',
+                created_at: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP',
+                updated_at: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'
+            },
+            Purchased_Tickets: {
+                ticket_id: 'BIGINT NOT NULL AUTO_INCREMENT',
+                user_id: 'INT NULL',
+                event_id: 'INT NULL',
+                ticket_code: 'VARCHAR(100) NULL',
+                status: "VARCHAR(32) NOT NULL DEFAULT 'valid'",
+                purchase_date: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP'
+            },
+            Ticket_Tiers: {
+                tier_id: 'INT NOT NULL AUTO_INCREMENT',
+                event_id: 'INT NULL',
+                tier_name: 'VARCHAR(255) NULL',
+                price: 'DECIMAL(12,2) NOT NULL DEFAULT 0',
+                capacity: 'INT NULL',
+                quantity_sold: 'INT NOT NULL DEFAULT 0'
+            }
+        };
+
+        for (const [tableName, tableDefinitions] of Object.entries(definitions)) {
+            let columns = tableColumns.get(tableName) || [];
+            const existingNames = new Set(columns.map((column) => column.COLUMN_NAME));
+            for (const [columnName, definition] of Object.entries(tableDefinitions)) {
+                if (existingNames.has(columnName)) continue;
+                let addDefinition = definition;
+                if (definition.includes('AUTO_INCREMENT')) {
+                    const hasPrimaryKey = columns.some((column) => column.COLUMN_KEY === 'PRI');
+                    addDefinition += hasPrimaryKey ? ' UNIQUE' : ' PRIMARY KEY';
+                }
+                await connection.query(
+                    `ALTER TABLE ?? ADD COLUMN ?? ${addDefinition}`,
+                    [tableName, columnName]
+                );
+                console.log(`[schema] Added ${tableName}.${columnName}`);
+                columns = [...columns, {
+                    COLUMN_NAME: columnName,
+                    IS_NULLABLE: /\bNULL\b/.test(definition) && !/NOT NULL/.test(definition) ? 'YES' : 'NO',
+                    COLUMN_KEY: definition.includes('AUTO_INCREMENT') && !columns.some((column) => column.COLUMN_KEY === 'PRI') ? 'PRI' : ''
+                }];
+                existingNames.add(columnName);
+            }
+
+            if (tableName === 'Orders') {
+                const userIdColumn = columns.find((column) => column.COLUMN_NAME === 'user_id');
+                if (userIdColumn && userIdColumn.IS_NULLABLE === 'NO') {
+                    await connection.query('ALTER TABLE `Orders` MODIFY COLUMN `user_id` INT NULL');
+                    console.log('[schema] Updated Orders.user_id to allow NULL');
+                }
+            }
+        }
+    } finally {
+        connection.release();
+    }
+}
 
 // Admin passcode tokens are HMAC-signed and expire after one work session.
 const getAdminPasscode = () => process.env.ADMIN_PASSCODE || 'twendeevents.co.ke';
@@ -984,6 +1077,17 @@ app.get('/api/user/tickets/:userId', async (req, res) => {
         res.status(500).json({ error: 'Failed to load tickets' });
     }
 });
-app.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
-});
+async function startServer() {
+    try {
+        await ensurePaymentSchema();
+        app.listen(PORT, () => {
+            console.log(`🚀 Server running on http://localhost:${PORT}`);
+        });
+    } catch (error) {
+        console.error('Payment schema migration failed; server was not started:', error);
+        process.exitCode = 1;
+        await pool.end().catch(() => {});
+    }
+}
+
+startServer();
