@@ -12,7 +12,9 @@
   <link rel="stylesheet" href="styles.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" defer></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" defer></script>
-<script src="config.js"></script></head>
+  <script src="config.js"></script>
+  <script src="app.js" defer></script>
+</head>
 <body class="user-dashboard-page">
   <header class="user-dashboard-header">
     <nav class="user-dashboard-nav" aria-label="Main navigation">
@@ -88,7 +90,7 @@
       }
 
       if (!user) {
-        window.location.href = 'login.html';
+        window.location.replace('login.html?redirect=user-dashboard.html');
         return;
       }
 

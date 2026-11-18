@@ -1,3 +1,39 @@
+// Shared account routing guards and the "My tickets" navigation.
+(() => {
+  const pageName = window.location.pathname.split('/').pop() || 'index.html';
+  const adminPages = new Set(['dashboard.html', 'admin-approvals.html', 'admin-users.html']);
+  const readSessionUser = () => {
+    let storedUser;
+    try { storedUser = localStorage.getItem('user'); } catch (_) { return null; }
+    if (!storedUser) return null;
+    try {
+      const user = JSON.parse(storedUser);
+      if (!user || typeof user !== 'object' || Array.isArray(user)) throw new Error('Invalid saved user');
+      return user;
+    } catch (_) {
+      try { localStorage.removeItem('user'); } catch (_) { /* storage may be unavailable */ }
+      return null;
+    }
+  };
+
+  const sessionUser = readSessionUser();
+  if (pageName === 'user-dashboard.html' && !sessionUser) {
+    window.location.replace('login.html?redirect=user-dashboard.html');
+  } else if (adminPages.has(pageName)) {
+    if (!sessionUser) window.location.replace('login.html');
+    else if (String(sessionUser.role || '').toLowerCase() !== 'admin') window.location.replace('user-dashboard.html');
+  }
+
+  document.addEventListener('click', (event) => {
+    const ticketsLink = event.target.closest('[data-nav-my-tickets]');
+    if (!ticketsLink) return;
+    if (!readSessionUser()) {
+      event.preventDefault();
+      window.location.href = 'login.html?redirect=user-dashboard.html';
+    }
+  });
+})();
+
 const searchForm = document.querySelector('#event-search');
 if (searchForm) {
   const queryInput = document.querySelector('#query');
@@ -1328,12 +1364,22 @@ async function deleteUser(userId) {
       if (!response.ok) throw new Error(data.message || data.error || 'Invalid phone number or password.');
 
       localStorage.setItem('user', JSON.stringify(data.user));
-      const userRole = data.user.role.toLowerCase();
-        if (userRole === 'organizer' || userRole === 'admin') {
-            window.location.href = 'dashboard.html'; 
-        } else {
-            window.location.href = 'user-dashboard.html'; 
-        }
+      const userRole = String(data.user.role || '').toLowerCase();
+      const requestedRedirect = new URLSearchParams(window.location.search).get('redirect');
+      const allowedRedirects = new Set([
+        'index.html', 'discover.html', 'about.html', 'blog.html', 'contact.html',
+        'event-details.html', 'user-dashboard.html', 'dashboard.html', 'admin-users.html',
+        'admin-approvals.html', 'scanner.html', 'create-event.html', 'verify-ticket.html'
+      ]);
+      const redirectPage = requestedRedirect?.split('#')[0];
+      const adminOnlyPages = new Set(['dashboard.html', 'admin-users.html', 'admin-approvals.html']);
+      if (redirectPage && allowedRedirects.has(redirectPage)) {
+        window.location.href = adminOnlyPages.has(redirectPage) && userRole !== 'admin'
+          ? 'user-dashboard.html'
+          : requestedRedirect;
+      } else {
+        window.location.href = userRole === 'admin' ? 'dashboard.html' : 'user-dashboard.html';
+      }
     } catch (error) {
       statusMessage.textContent = error.message || 'Unable to sign in. Please try again.';
       statusMessage.classList.add('is-error');
