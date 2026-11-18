@@ -1275,11 +1275,12 @@ loadEventDetails();
       try {
         const response = await fetch(`${API_BASE_URL}/api/payments/status/${encodeURIComponent(externalReference)}`);
         const result = await response.json().catch(() => ({}));
-        if (response.ok && result.status === 'paid') {
+        const paymentState = String(result.status || result.payment_status || '').trim().toLowerCase();
+        if (response.ok && ['paid', 'success', 'completed'].includes(paymentState)) {
           showPaymentSuccess(result);
           return;
         }
-        if (response.ok && result.status === 'failed') {
+        if (response.ok && ['failed', 'cancelled', 'canceled', 'rejected', 'expired'].includes(paymentState)) {
           showPaymentFailure(result.failureReason || 'The payment was cancelled or declined.');
           return;
         }

@@ -270,15 +270,16 @@ async function getOrderTicketCodes(connection, orderId) {
     return tickets.map((ticket) => ticket.ticket_code);
 }
 
-// The callback and status-poll fallback both use this transaction-safe fulfillment path.
-async function applyPayHeroOutcome(externalReference, outcome) {
+// A locked order row makes callbacks and status polling share one idempotent issuer.
+async function fulfillPaidOrder(orderId, mpesaReceipt = null) {
     const connection = await pool.getConnection();
     try {
         await connection.beginTransaction();
         const [orders] = await connection.query(
-            `SELECT order_id, user_id, event_id, total_amount, tier_id, quantity, payment_status
-             FROM Orders WHERE external_reference = ? LIMIT 1 FOR UPDATE`,
-            [externalReference]
+            `SELECT order_id, user_id, event_id, total_amount, tier_id, quantity, payment_status,
+                    mpesa_receipt_number
+             FROM Orders WHERE order_id = ? LIMIT 1 FOR UPDATE`,
+            [orderId]
         );
         if (!orders.length) {
             await connection.rollback();
@@ -289,65 +290,77 @@ async function applyPayHeroOutcome(externalReference, outcome) {
         if (String(order.payment_status).toLowerCase() === 'paid') {
             const tickets = await getOrderTicketCodes(connection, order.order_id);
             await connection.commit();
-            return { found: true, status: 'paid', tickets };
-        }
-        if (String(order.payment_status).toLowerCase() === 'failed') {
-            await connection.commit();
-            return { found: true, status: 'failed', tickets: [] };
+            return { found: true, status: 'paid', mpesaReceipt: order.mpesa_receipt_number || mpesaReceipt || null, tickets };
         }
 
-        if (outcome.status === 'paid') {
-            if (outcome.amount != null && Number(outcome.amount) !== Number(order.total_amount)) {
-                const reason = `PayHero amount mismatch: expected KES ${order.total_amount}, received KES ${outcome.amount}`;
-                await connection.query(
-                    `UPDATE Orders SET payment_status = 'failed', payment_failure_reason = ? WHERE order_id = ?`,
-                    [reason, order.order_id]
-                );
-                await connection.commit();
-                return { found: true, status: 'failed', tickets: [], failureReason: reason };
-            }
+        const [tierRows] = await connection.query(
+            `SELECT tier_id FROM Ticket_Tiers WHERE tier_id = ? AND event_id = ? LIMIT 1 FOR UPDATE`,
+            [order.tier_id, order.event_id]
+        );
+        if (!tierRows.length) throw new Error('The ticket tier for this paid order no longer exists');
 
-            const [tierRows] = await connection.query(
-                `SELECT tier_id FROM Ticket_Tiers WHERE tier_id = ? AND event_id = ? LIMIT 1 FOR UPDATE`,
-                [order.tier_id, order.event_id]
-            );
-            if (!tierRows.length) throw new Error('The ticket tier for this paid order no longer exists');
-
-            await connection.query(
-                `UPDATE Ticket_Tiers SET quantity_sold = COALESCE(quantity_sold, 0) + ? WHERE tier_id = ?`,
-                [order.quantity, order.tier_id]
-            );
-            await connection.query(
-                `UPDATE Orders
-                 SET payment_status = 'paid', mpesa_receipt_number = ?, payment_failure_reason = NULL
-                 WHERE order_id = ?`,
-                [outcome.receipt || null, order.order_id]
-            );
-
-            const ticketCodes = [];
-            for (let index = 0; index < Number(order.quantity); index += 1) {
-                const ticketCode = randomUUID();
-                ticketCodes.push(ticketCode);
-                await connection.query(
-                    `INSERT INTO Purchased_Tickets (user_id, event_id, ticket_code) VALUES (?, ?, ?)`,
-                    [order.user_id, order.event_id, ticketCode]
-                );
-                await connection.query(
-                    `INSERT INTO Tickets (order_id, tier_id, user_id, ticket_code, is_scanned, created_at) VALUES (?, ?, ?, ?, 0, NOW())`,
-                    [order.order_id, order.tier_id, order.user_id, ticketCode]
-                );
-            }
-            await connection.commit();
-            return { found: true, status: 'paid', tickets: ticketCodes };
+        const ticketQuantity = Number(order.quantity || 1);
+        if (!Number.isSafeInteger(ticketQuantity) || ticketQuantity < 1) {
+            throw new Error(`Order ${order.order_id} has an invalid ticket quantity`);
         }
 
-        const reason = outcome.failureReason || 'M-Pesa payment was not completed.';
         await connection.query(
-            `UPDATE Orders SET payment_status = 'failed', payment_failure_reason = ? WHERE order_id = ?`,
-            [reason, order.order_id]
+            `UPDATE Ticket_Tiers SET quantity_sold = COALESCE(quantity_sold, 0) + ? WHERE tier_id = ?`,
+            [ticketQuantity, order.tier_id]
+        );
+        await connection.query(
+            `UPDATE Orders
+             SET payment_status = 'paid', mpesa_receipt_number = COALESCE(?, mpesa_receipt_number),
+                 payment_failure_reason = NULL, failure_reason = NULL
+             WHERE order_id = ?`,
+            [mpesaReceipt, order.order_id]
+        );
+
+        const ticketCodes = [];
+        for (let index = 0; index < ticketQuantity; index += 1) {
+            const ticketCode = randomUUID();
+            ticketCodes.push(ticketCode);
+            await connection.query(
+                `INSERT INTO Purchased_Tickets (user_id, event_id, ticket_code) VALUES (?, ?, ?)`,
+                [order.user_id, order.event_id, ticketCode]
+            );
+            await connection.query(
+                `INSERT INTO Tickets (order_id, tier_id, user_id, ticket_code, is_scanned, created_at) VALUES (?, ?, ?, ?, 0, NOW())`,
+                [order.order_id, order.tier_id, order.user_id, ticketCode]
+            );
+        }
+        await connection.commit();
+        return { found: true, status: 'paid', mpesaReceipt: mpesaReceipt || order.mpesa_receipt_number || null, tickets: ticketCodes };
+    } catch (error) {
+        await connection.rollback();
+        throw error;
+    } finally {
+        connection.release();
+    }
+}
+
+async function markOrderFailed(externalReference, reason) {
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+        const [orders] = await connection.query(
+            `SELECT order_id, payment_status FROM Orders WHERE external_reference = ? LIMIT 1 FOR UPDATE`,
+            [externalReference]
+        );
+        if (!orders.length) {
+            await connection.rollback();
+            return { found: false, status: 'not_found' };
+        }
+        if (String(orders[0].payment_status).toLowerCase() === 'paid') {
+            await connection.commit();
+            return { found: true, status: 'paid' };
+        }
+        await connection.query(
+            `UPDATE Orders SET payment_status = 'failed', payment_failure_reason = ?, failure_reason = ? WHERE order_id = ?`,
+            [reason, reason, orders[0].order_id]
         );
         await connection.commit();
-        return { found: true, status: 'failed', tickets: [], failureReason: reason };
+        return { found: true, status: 'failed' };
     } catch (error) {
         await connection.rollback();
         throw error;
@@ -489,54 +502,47 @@ app.post('/api/payments/stk-push', async (req, res) => {
 });
 
 app.post('/api/payments/payhero-callback', async (req, res) => {
+    console.log('[PayHero Callback]', JSON.stringify(req.body));
     try {
-        const payload = req.body || {};
-        const response = payload.response || payload;
-        const externalReference = response.ExternalReference || response.external_reference || payload.external_reference;
-        const status = String(response.Status || response.status || '').toLowerCase();
-        const terminalFailureStatuses = ['failed', 'cancelled', 'canceled', 'expired', 'rejected'];
-        if (externalReference && (status === 'success' || terminalFailureStatuses.includes(status))) {
+        const body = req.body || {};
+        const payload = body.response || body;
+        const externalReference = payload.ExternalReference || payload.external_reference || body.external_reference;
+        const payheroReference = payload.CheckoutRequestID || payload.reference || body.reference;
+        const statusRaw = String(payload.Status || payload.status || body.status || '').toUpperCase();
+        const mpesaReceipt = payload.MpesaReceiptNumber || payload.mpesa_receipt_number || payload.provider_reference
+            || body.MpesaReceiptNumber || body.mpesa_receipt_number || body.provider_reference || null;
+        const resultCode = payload.ResultCode ?? payload.result_code ?? body.ResultCode ?? body.result_code;
+        const isPaid = ['SUCCESS', 'COMPLETED'].includes(statusRaw) || Number(resultCode) === 0;
+        const failedStatuses = ['FAILED', 'CANCELLED', 'CANCELED', 'EXPIRED', 'REJECTED'];
+
+        if (!externalReference) {
+            console.warn('PayHero callback has no external reference.');
+        } else {
             const [orders] = await pool.query(
-                `SELECT payhero_reference, payhero_checkout_request_id, payment_status
+                `SELECT order_id, payment_status, payhero_reference, payhero_checkout_request_id
                  FROM Orders WHERE external_reference = ? LIMIT 1`,
                 [externalReference]
             );
             if (!orders.length) {
-                console.warn('PayHero callback did not match a Twende order.');
-            } else if (String(orders[0].payment_status).toLowerCase() !== 'pending') {
-                // Repeated callbacks after settlement are safely ignored.
+                console.warn('[PayHero Callback] No matching Twende order:', externalReference);
             } else {
-                let reference = orders[0].payhero_reference || orders[0].payhero_checkout_request_id;
-                if (!reference && response.CheckoutRequestID) {
-                    reference = String(response.CheckoutRequestID);
+                const order = orders[0];
+                if (payheroReference && !order.payhero_reference && !order.payhero_checkout_request_id) {
                     await pool.query(
-                        `UPDATE Orders SET payhero_checkout_request_id = ? WHERE external_reference = ? AND payment_status = 'pending'`,
-                        [reference, externalReference]
+                        `UPDATE Orders SET payhero_reference = ?, payhero_checkout_request_id = ? WHERE order_id = ?`,
+                        [payheroReference, payheroReference, order.order_id]
                     );
                 }
-                if (!reference) {
-                    console.warn('PayHero callback ignored until the payment reference is saved or the order is pending.');
+                if (isPaid) {
+                    await fulfillPaidOrder(order.order_id, mpesaReceipt);
+                } else if (failedStatuses.includes(statusRaw)) {
+                    const reason = payload.ResultDesc || payload.result_desc || body.ResultDesc || body.result_desc
+                        || `PayHero reported ${statusRaw.toLowerCase()}.`;
+                    await markOrderFailed(externalReference, reason);
                 } else {
-                    const verified = await fetchPayHeroTransactionStatus(reference);
-                    const verifiedStatus = String(verified.status || verified.Status || '').toLowerCase();
-                    if (status === 'success' && verifiedStatus === 'success') {
-                        await applyPayHeroOutcome(externalReference, {
-                            status: 'paid',
-                            amount: response.Amount ?? response.amount ?? verified.amount ?? verified.Amount,
-                            receipt: response.MpesaReceiptNumber || response.mpesa_receipt_number || verified.MpesaReceiptNumber || verified.provider_reference || null
-                        });
-                    } else if (status !== 'success' && terminalFailureStatuses.includes(verifiedStatus)) {
-                        await applyPayHeroOutcome(externalReference, {
-                            status: 'failed',
-                            failureReason: response.ResultDesc || response.result_desc || verified.ResultDesc || 'M-Pesa payment failed or was cancelled.'
-                        });
-                    } else {
-                        console.warn('PayHero callback received, but the transaction is not terminal in PayHero yet.');
-                    }
+                    console.warn('[PayHero Callback] Non-terminal status received:', statusRaw || '(empty)');
                 }
             }
-        } else {
-            console.warn('PayHero callback had no usable external reference/status.');
         }
     } catch (error) {
         console.error('PayHero callback processing failed:', error);
@@ -549,31 +555,46 @@ app.get('/api/payments/status/:externalReference', async (req, res) => {
     const externalReference = String(req.params.externalReference || '');
     try {
         const [orders] = await pool.query(
-            `SELECT order_id, payment_status, mpesa_receipt_number, payment_failure_reason,
+            `SELECT order_id, external_reference, payment_status, mpesa_receipt_number, payment_failure_reason,
                     payhero_reference, payhero_checkout_request_id
-             FROM Orders WHERE external_reference = ? LIMIT 1`,
-            [externalReference]
+             FROM Orders
+             WHERE external_reference = ? OR order_id = ?
+             ORDER BY CASE WHEN external_reference = ? THEN 0 ELSE 1 END
+             LIMIT 1`,
+            [externalReference, /^\d+$/.test(externalReference) ? Number(externalReference) : null, externalReference]
         );
         if (!orders.length) return res.status(404).json({ error: 'Payment order not found.' });
         let order = orders[0];
+
+        if (String(order.payment_status).toLowerCase() === 'paid') {
+            const connection = await pool.getConnection();
+            let tickets;
+            try { tickets = await getOrderTicketCodes(connection, order.order_id); }
+            finally { connection.release(); }
+            return res.status(200).json({
+                status: 'paid',
+                payment_status: 'paid',
+                mpesaReceipt: order.mpesa_receipt_number || null,
+                tickets
+            });
+        }
 
         if (String(order.payment_status).toLowerCase() === 'pending') {
             const reference = order.payhero_reference || order.payhero_checkout_request_id;
             if (reference) {
                 try {
                     const payHeroStatus = await fetchPayHeroTransactionStatus(reference);
-                    const status = String(payHeroStatus.status || payHeroStatus.Status || '').toLowerCase();
-                    if (status === 'success') {
-                        await applyPayHeroOutcome(externalReference, {
-                            status: 'paid',
-                            amount: payHeroStatus.amount ?? payHeroStatus.Amount,
-                            receipt: payHeroStatus.MpesaReceiptNumber || payHeroStatus.provider_reference || null
-                        });
-                    } else if (['failed', 'cancelled', 'canceled', 'expired', 'rejected'].includes(status)) {
-                        await applyPayHeroOutcome(externalReference, {
-                            status: 'failed',
-                            failureReason: payHeroStatus.ResultDesc || payHeroStatus.result_desc || 'M-Pesa payment failed or was cancelled.'
-                        });
+                    console.log('[PayHero Status]', JSON.stringify(payHeroStatus));
+                    const statusPayload = payHeroStatus.response || payHeroStatus;
+                    const statusRaw = String(statusPayload.status || statusPayload.Status || '').toUpperCase();
+                    const resultCode = statusPayload.ResultCode ?? statusPayload.result_code;
+                    if (['SUCCESS', 'COMPLETED'].includes(statusRaw) || Number(resultCode) === 0) {
+                        const receipt = statusPayload.provider_reference || statusPayload.MpesaReceiptNumber
+                            || statusPayload.mpesa_receipt_number || null;
+                        await fulfillPaidOrder(order.order_id, receipt);
+                    } else if (['FAILED', 'CANCELLED', 'CANCELED', 'EXPIRED', 'REJECTED'].includes(statusRaw)) {
+                        await markOrderFailed(order.external_reference || externalReference,
+                            statusPayload.ResultDesc || statusPayload.result_desc || 'M-Pesa payment failed or was cancelled.');
                     }
                 } catch (statusError) {
                     console.warn('PayHero status fallback is not available yet:', statusError.message);
@@ -581,8 +602,11 @@ app.get('/api/payments/status/:externalReference', async (req, res) => {
             }
             const [updatedOrders] = await pool.query(
                 `SELECT order_id, payment_status, mpesa_receipt_number, payment_failure_reason
-                 FROM Orders WHERE external_reference = ? LIMIT 1`,
-                [externalReference]
+                 FROM Orders
+                 WHERE external_reference = ? OR order_id = ?
+                 ORDER BY CASE WHEN external_reference = ? THEN 0 ELSE 1 END
+                 LIMIT 1`,
+                [externalReference, /^\d+$/.test(externalReference) ? Number(externalReference) : null, externalReference]
             );
             order = updatedOrders[0] || order;
         }
@@ -595,6 +619,7 @@ app.get('/api/payments/status/:externalReference', async (req, res) => {
         }
         return res.status(200).json({
             status: String(order.payment_status || 'pending').toLowerCase(),
+            payment_status: String(order.payment_status || 'pending').toLowerCase(),
             mpesaReceipt: order.mpesa_receipt_number || null,
             failureReason: order.payment_failure_reason || null,
             tickets
