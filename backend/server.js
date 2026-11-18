@@ -397,7 +397,6 @@ app.post('/api/payments/payhero-callback', async (req, res) => {
                     }
                 }
             }
-            }
         } else {
             console.warn('PayHero callback had no usable external reference/status.');
         }
