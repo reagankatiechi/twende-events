@@ -138,49 +138,50 @@ if (checkoutCard) {
     updateTotal();
   });
   const buyTicketButton = document.querySelector('#buy-ticket-btn');
-  buyTicketButton?.addEventListener('click', async () => {
-    const storedUser = localStorage.getItem('user');
-    if (!storedUser) {
-      window.alert('Please log in to purchase tickets.');
-      window.location.href = 'login.html';
-      return;
-    }
-
-    let user;
-    try {
-      user = JSON.parse(storedUser);
-    } catch (error) {
-      localStorage.removeItem('user');
-      window.alert('Please log in to purchase tickets.');
-      window.location.href = 'login.html';
-      return;
-    }
-
+  buyTicketButton?.addEventListener('click', () => {
+    let user = null;
+    try { user = JSON.parse(localStorage.getItem('user') || 'null'); } catch (_) { /* treated as signed out */ }
     const eventId = new URLSearchParams(window.location.search).get('id');
-    if (!user?.user_id || !eventId) {
+    if (!user) {
+      window.location.href = `login.html?redirect=${encodeURIComponent(`event-details.html?id=${eventId}`)}`;
+      return;
+    }
+    if (!user.user_id || !eventId) {
       checkoutFeedback.textContent = 'Your account or event could not be identified. Please try again.';
       return;
     }
 
-    checkoutFeedback.textContent = 'Processing your ticket purchase…';
-    buyTicketButton.disabled = true;
-    try {
-      const response = await fetch(API_BASE_URL + '/api/tickets/mock-purchase', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: user.user_id, event_id: eventId })
-      });
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.message || data.error || 'Ticket purchase failed. Please try again.');
-      }
-      window.alert('Ticket purchased successfully!');
-      window.location.href = 'user-dashboard.html';
-    } catch (error) {
-      console.error('Ticket purchase failed:', error);
-      checkoutFeedback.textContent = error.message || 'Ticket purchase failed. Please try again.';
-      buyTicketButton.disabled = false;
+    const selectedTiers = getTicketTiers().map((tier) => ({
+      tierId: Number(tier.dataset.tierId),
+      tierName: tier.querySelector('.tier-info b')?.textContent.trim() || 'Ticket',
+      quantity: Number(tier.querySelector('[data-quantity]')?.value || 0)
+    })).filter((tier) => tier.quantity > 0);
+    if (selectedTiers.length !== 1 || !Number.isSafeInteger(selectedTiers[0]?.tierId) || selectedTiers[0].tierId <= 0) {
+      checkoutFeedback.textContent = selectedTiers.length > 1
+        ? 'Please check out one ticket tier at a time.'
+        : 'Choose a ticket tier before continuing.';
+      return;
     }
+    if (!user.full_name || !user.email) {
+      checkoutFeedback.textContent = 'Add your name and email to your account before buying a ticket.';
+      return;
+    }
+
+    const ticket = selectedTiers[0];
+    const localPhone = String(user.phone_number || user.phone || '').replace(/\D/g, '').replace(/^254/, '').replace(/^0/, '').slice(-9);
+    const eventName = document.querySelector('#event-title')?.textContent.replace(/\s+/g, ' ').trim() || 'Twende Event';
+    checkoutFeedback.textContent = '';
+    window.twendeMpesaCheckout?.open({
+      userId: Number(user.user_id),
+      eventId: Number(eventId),
+      tierId: ticket.tierId,
+      tierName: `${ticket.tierName} × ${ticket.quantity}`,
+      quantity: ticket.quantity,
+      eventName,
+      attendeeName: user.full_name,
+      attendeeEmail: user.email,
+      phone: localPhone
+    });
   });
 }
 
@@ -1020,7 +1021,8 @@ async function loadEventDetails() {
           const formattedPrice = `KES ${price.toLocaleString('en-KE')}`;
           const safeName = escapeTicketText(name);
           const description = escapeTicketText(ticket?.description || 'General admission');
-          return `<div class="ticket-tier" data-price="${price}"><div class="tier-info"><b>${safeName}</b><span>${description}</span><strong>${formattedPrice}</strong></div><div class="quantity-control"><button type="button" data-quantity-change="-1" aria-label="Remove one ${safeName} ticket">−</button><output data-quantity>0</output><button type="button" data-quantity-change="1" aria-label="Add one ${safeName} ticket">+</button></div></div>`;
+          const tierId = Number(ticket?.tier_id ?? ticket?.id);
+          return `<div class="ticket-tier" data-tier-id="${Number.isSafeInteger(tierId) ? tierId : ''}" data-price="${price}"><div class="tier-info"><b>${safeName}</b><span>${description}</span><strong>${formattedPrice}</strong></div><div class="quantity-control"><button type="button" data-quantity-change="-1" aria-label="Remove one ${safeName} ticket">−</button><output data-quantity>0</output><button type="button" data-quantity-change="1" aria-label="Add one ${safeName} ticket">+</button></div></div>`;
         }).join('');
       } else if (!ticketContainer.textContent.trim()) {
         ticketContainer.innerHTML = '<p class="ticket-availability-message">Tickets will be available soon.</p>';
@@ -1063,7 +1065,7 @@ async function loadEventDetails() {
 
 loadEventDetails();
 
-// STK Push Simulation Logic
+// PayHero STK Push checkout and payment-status polling.
 (() => {
   const modal = document.querySelector('#mpesa-modal');
   const form = document.querySelector('#mpesa-payment-form');
@@ -1073,35 +1075,151 @@ loadEventDetails();
   const stepTwo = document.querySelector('#mpesa-step-2');
   const stepThree = document.querySelector('#mpesa-step-3');
   const countdown = document.querySelector('#mpesa-countdown');
-  let successTimeout;
-  let countdownInterval;
-
-  const clearSimulation = () => {
-    window.clearTimeout(successTimeout);
-    window.clearInterval(countdownInterval);
-    successTimeout = undefined;
-    countdownInterval = undefined;
-  };
+  const progressMessage = document.querySelector('#mpesa-progress-message');
+  const paymentError = document.querySelector('#mpesa-payment-error');
+  const submitError = document.querySelector('#mpesa-submit-error');
+  const spinner = document.querySelector('#mpesa-spinner');
+  const waitTitle = document.querySelector('#mpesa-wait-title');
+  const countdownLabel = document.querySelector('#mpesa-countdown-label');
+  const payButton = document.querySelector('#mpesa-pay-button');
+  const cancelButton = document.querySelector('#mpesa-cancel');
+  const tryAgainButton = document.querySelector('#mpesa-try-again');
+  let checkoutContext = null;
+  let activePayment = null;
+  let pollTimer = null;
+  let elapsedSeconds = 0;
+  let pollInProgress = false;
 
   const showStep = (step) => {
     [stepOne, stepTwo, stepThree].forEach((item) => item.classList.toggle('hidden', item !== step));
   };
 
   const closeModal = () => {
-    clearSimulation();
     modal.classList.add('hidden');
     modal.setAttribute('aria-hidden', 'true');
     document.body.classList.remove('mpesa-modal-open');
-    showStep(stepOne);
-    form.reset();
+  };
+
+  const openModal = (context) => {
+    if (context) checkoutContext = context;
+    if (activePayment) {
+      checkoutContext = activePayment.context;
+      showStep(stepTwo);
+    } else {
+      showStep(stepOne);
+      if (checkoutContext) {
+        document.querySelector('#mpesa-event-name').textContent = checkoutContext.eventName;
+        document.querySelector('#mpesa-ticket-tier').textContent = checkoutContext.tierName;
+        const amount = Number(document.querySelector('#ticket-total')?.textContent.replace(/[^\d.]/g, '') || 0);
+        const formattedAmount = `KES ${amount.toLocaleString('en-KE')}`;
+        document.querySelector('#mpesa-total-amount').textContent = formattedAmount;
+        payButton.textContent = `Pay ${formattedAmount}`;
+        const phone = document.querySelector('#mpesa-phone');
+        if (!phone.value && checkoutContext.phone) phone.value = checkoutContext.phone;
+      }
+      submitError.hidden = true;
+      submitError.textContent = '';
+    }
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('mpesa-modal-open');
+    if (activePayment && !pollTimer) startPolling(activePayment.externalReference);
+  };
+
+  const stopPolling = () => {
+    if (pollTimer) window.clearInterval(pollTimer);
+    pollTimer = null;
+    pollInProgress = false;
+  };
+
+  const showPaymentFailure = (reason) => {
+    stopPolling();
+    activePayment = null;
+    spinner.hidden = true;
+    waitTitle.textContent = 'Payment not completed';
+    progressMessage.textContent = 'Your M-Pesa payment did not go through.';
+    paymentError.textContent = reason || 'The payment was cancelled or declined. You can try again.';
+    paymentError.hidden = false;
+    countdownLabel.hidden = true;
+    tryAgainButton.hidden = false;
+    showStep(stepTwo);
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('mpesa-modal-open');
+  };
+
+  const showPaymentSuccess = (paymentStatus) => {
+    stopPolling();
+    const receipt = paymentStatus.mpesaReceipt || 'Receipt pending';
+    document.querySelector('#mpesa-receipt-code').textContent = receipt;
+    const count = Array.isArray(paymentStatus.tickets) ? paymentStatus.tickets.length : checkoutContext?.quantity || 1;
+    document.querySelector('#mpesa-success-message').textContent = `${count} ticket${count === 1 ? '' : 's'} issued and ready in your My Tickets dashboard.`;
+    activePayment = null;
+    if (modal.classList.contains('hidden')) {
+      const feedback = document.querySelector('#checkout-feedback');
+      if (feedback) feedback.textContent = `Payment received · M-Pesa receipt ${receipt}. Your ticket${count === 1 ? ' is' : 's are'} ready in My Tickets.`;
+      return;
+    }
+    showStep(stepThree);
+  };
+
+  const startPolling = (externalReference) => {
+    stopPolling();
+    const pollingStartedAt = Date.now();
+    elapsedSeconds = 0;
+    pollInProgress = false;
+    countdownLabel.hidden = false;
+    tryAgainButton.hidden = true;
+    paymentError.hidden = true;
+    spinner.hidden = false;
+    waitTitle.textContent = 'Check your phone...';
+    countdown.textContent = '01:00';
+    pollTimer = window.setInterval(async () => {
+      if (!activePayment || activePayment.externalReference !== externalReference) return;
+      elapsedSeconds = Math.floor((Date.now() - pollingStartedAt) / 1000);
+      countdown.textContent = `00:${String(Math.max(0, 60 - elapsedSeconds)).padStart(2, '0')}`;
+      if (elapsedSeconds >= 60) {
+        stopPolling();
+        spinner.hidden = true;
+        waitTitle.textContent = 'Still waiting for confirmation';
+        progressMessage.textContent = 'The payment is still pending. You can close this window and check My Tickets shortly.';
+        countdownLabel.hidden = true;
+        return;
+      }
+      if (pollInProgress) return;
+      pollInProgress = true;
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/payments/status/${encodeURIComponent(externalReference)}`);
+        const result = await response.json().catch(() => ({}));
+        if (response.ok && result.status === 'paid') {
+          showPaymentSuccess(result);
+          return;
+        }
+        if (response.ok && result.status === 'failed') {
+          showPaymentFailure(result.failureReason || 'The payment was cancelled or declined.');
+          return;
+        }
+      } catch (error) {
+        console.warn('Payment status check failed; will retry:', error.message);
+      } finally {
+        pollInProgress = false;
+      }
+    }, 3000);
   };
 
   document.querySelector('#mpesa-close')?.addEventListener('click', closeModal);
   modal.addEventListener('click', (event) => {
     if (event.target === modal) closeModal();
   });
-  document.querySelector('#mpesa-cancel')?.addEventListener('click', () => {
-    clearSimulation();
+  cancelButton?.addEventListener('click', closeModal);
+  tryAgainButton?.addEventListener('click', () => {
+    activePayment = null;
+    stopPolling();
+    paymentError.hidden = true;
+    submitError.hidden = true;
+    spinner.hidden = false;
+    countdownLabel.hidden = false;
+    tryAgainButton.hidden = true;
     showStep(stepOne);
     document.querySelector('#mpesa-phone')?.focus();
   });
@@ -1109,21 +1227,58 @@ loadEventDetails();
     if (event.key === 'Escape' && !modal.classList.contains('hidden')) closeModal();
   });
 
-  form.addEventListener('submit', (event) => {
+  window.twendeMpesaCheckout = { open: openModal };
+
+  form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (!form.reportValidity()) return;
-    clearSimulation();
+    if (!checkoutContext || activePayment) return;
+    submitError.hidden = true;
+    submitError.textContent = '';
+    const localPhone = String(form.elements.phone.value || '').replace(/\D/g, '');
+    if (!/^\d{9}$/.test(localPhone)) {
+      submitError.textContent = 'Enter the nine digits after +254.';
+      submitError.hidden = false;
+      return;
+    }
+    payButton.disabled = true;
+    payButton.setAttribute('aria-busy', 'true');
+    waitTitle.textContent = 'Starting your payment...';
+    progressMessage.textContent = 'Please wait while we send the M-Pesa prompt.';
     showStep(stepTwo);
-    let secondsLeft = 30;
-    countdown.textContent = '00:30';
-    countdownInterval = window.setInterval(() => {
-      secondsLeft = Math.max(0, secondsLeft - 1);
-      countdown.textContent = `00:${String(secondsLeft).padStart(2, '0')}`;
-    }, 1000);
-    successTimeout = window.setTimeout(() => {
-      clearSimulation();
-      showStep(stepThree);
-    }, 4000);
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/payments/stk-push`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: checkoutContext.userId,
+          event_id: checkoutContext.eventId,
+          tier_id: checkoutContext.tierId,
+          quantity: checkoutContext.quantity,
+          attendee_name: checkoutContext.attendeeName,
+          attendee_email: checkoutContext.attendeeEmail,
+          phone_number: `+254${localPhone}`
+        })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success || !result.externalReference) {
+        throw new Error(result.error || 'Could not start the M-Pesa payment. Please try again.');
+      }
+      activePayment = { externalReference: result.externalReference, context: checkoutContext };
+      spinner.hidden = false;
+      paymentError.hidden = true;
+      progressMessage.textContent = `M-Pesa prompt sent to 0${localPhone.slice(0, 3)}••••••. Enter your M-Pesa PIN on your phone to complete payment.`;
+      startPolling(result.externalReference);
+    } catch (error) {
+      showStep(stepOne);
+      submitError.textContent = error.message || 'Could not start the M-Pesa payment. Please try again.';
+      submitError.hidden = false;
+    } finally {
+      payButton.disabled = false;
+      payButton.removeAttribute('aria-busy');
+    }
   });
 })();
 
@@ -1371,12 +1526,23 @@ async function deleteUser(userId) {
         'event-details.html', 'user-dashboard.html', 'dashboard.html', 'admin-users.html',
         'admin-approvals.html', 'scanner.html', 'create-event.html', 'verify-ticket.html'
       ]);
-      const redirectPage = requestedRedirect?.split('#')[0];
+      let safeRedirect = null;
+      if (requestedRedirect && !requestedRedirect.startsWith('/') && !requestedRedirect.includes('\\')) {
+        try {
+          const candidate = new URL(requestedRedirect, window.location.href);
+          const page = candidate.pathname.split('/').pop();
+          const localPagePath = new URL(page, window.location.href).pathname;
+          if (candidate.origin === window.location.origin && candidate.pathname === localPagePath && allowedRedirects.has(page)) {
+            safeRedirect = `${page}${candidate.search}${candidate.hash}`;
+          }
+        } catch (_) { /* ignore malformed or external redirect targets */ }
+      }
       const adminOnlyPages = new Set(['dashboard.html', 'admin-users.html', 'admin-approvals.html']);
-      if (redirectPage && allowedRedirects.has(redirectPage)) {
+      if (safeRedirect) {
+        const redirectPage = safeRedirect.split(/[?#]/)[0];
         window.location.href = adminOnlyPages.has(redirectPage) && userRole !== 'admin'
           ? 'user-dashboard.html'
-          : requestedRedirect;
+          : safeRedirect;
       } else {
         window.location.href = userRole === 'admin' ? 'dashboard.html' : 'user-dashboard.html';
       }

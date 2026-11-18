@@ -6,6 +6,7 @@ require('dotenv').config();
 const app = express();
 const multer = require('multer');
 const path = require('path');
+const { randomUUID } = require('crypto');
 const cloudinary = require('cloudinary').v2;
 
 cloudinary.config({
@@ -70,6 +71,401 @@ const pool = mysql.createPool({
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0
+});
+
+function payHeroAuthorization() {
+    const username = process.env.PAYHERO_API_USERNAME;
+    const password = process.env.PAYHERO_API_PASSWORD;
+    if (!username || !password) throw new Error('PayHero API credentials are not configured');
+    return `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
+}
+
+async function payHeroRequest(url, options = {}) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    try {
+        const response = await fetch(url, {
+            ...options,
+            signal: controller.signal,
+            headers: {
+                Authorization: payHeroAuthorization(),
+                Accept: 'application/json',
+                ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+                ...options.headers
+            }
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || (options.method !== 'GET' && payload.success === false)) {
+            const error = new Error(payload.message || payload.error || payload.ResultDesc || `PayHero request failed (${response.status})`);
+            error.status = response.status;
+            error.payHeroResponse = payload;
+            throw error;
+        }
+        return payload;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+async function fetchPayHeroTransactionStatus(reference) {
+    const query = new URLSearchParams({ reference: String(reference) });
+    return payHeroRequest(`https://backend.payhero.co.ke/api/v2/transaction-status?${query}`, { method: 'GET' });
+}
+
+function normalizeKenyanPhone(phone) {
+    const input = String(phone || '').trim();
+    const digits = input.replace(/\D/g, '');
+    if (/^0[17]\d{8}$/.test(digits)) return `254${digits.slice(1)}`;
+    if (/^254[17]\d{8}$/.test(digits)) return digits;
+    throw new Error('Enter a valid Kenyan mobile number, such as 0712345678 or +254712345678.');
+}
+
+async function getOrderTicketCodes(connection, orderId) {
+    const [tickets] = await connection.query(
+        `SELECT p.ticket_code
+         FROM Tickets t
+         JOIN Purchased_Tickets p ON p.ticket_code = t.ticket_code
+         WHERE t.order_id = ?
+         ORDER BY t.ticket_id ASC`,
+        [orderId]
+    );
+    return tickets.map((ticket) => ticket.ticket_code);
+}
+
+// The callback and status-poll fallback both use this transaction-safe fulfillment path.
+async function applyPayHeroOutcome(externalReference, outcome) {
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+        const [orders] = await connection.query(
+            `SELECT order_id, user_id, event_id, total_amount, tier_id, quantity, payment_status
+             FROM Orders WHERE external_reference = ? LIMIT 1 FOR UPDATE`,
+            [externalReference]
+        );
+        if (!orders.length) {
+            await connection.rollback();
+            return { found: false, status: 'not_found', tickets: [] };
+        }
+
+        const order = orders[0];
+        if (String(order.payment_status).toLowerCase() === 'paid') {
+            const tickets = await getOrderTicketCodes(connection, order.order_id);
+            await connection.commit();
+            return { found: true, status: 'paid', tickets };
+        }
+        if (String(order.payment_status).toLowerCase() === 'failed') {
+            await connection.commit();
+            return { found: true, status: 'failed', tickets: [] };
+        }
+
+        if (outcome.status === 'paid') {
+            if (outcome.amount != null && Number(outcome.amount) !== Number(order.total_amount)) {
+                const reason = `PayHero amount mismatch: expected KES ${order.total_amount}, received KES ${outcome.amount}`;
+                await connection.query(
+                    `UPDATE Orders SET payment_status = 'failed', payment_failure_reason = ? WHERE order_id = ?`,
+                    [reason, order.order_id]
+                );
+                await connection.commit();
+                return { found: true, status: 'failed', tickets: [], failureReason: reason };
+            }
+
+            const [tierRows] = await connection.query(
+                `SELECT tier_id FROM Ticket_Tiers WHERE tier_id = ? AND event_id = ? LIMIT 1 FOR UPDATE`,
+                [order.tier_id, order.event_id]
+            );
+            if (!tierRows.length) throw new Error('The ticket tier for this paid order no longer exists');
+
+            await connection.query(
+                `UPDATE Ticket_Tiers SET quantity_sold = COALESCE(quantity_sold, 0) + ? WHERE tier_id = ?`,
+                [order.quantity, order.tier_id]
+            );
+            await connection.query(
+                `UPDATE Orders
+                 SET payment_status = 'paid', mpesa_receipt_number = ?, payment_failure_reason = NULL
+                 WHERE order_id = ?`,
+                [outcome.receipt || null, order.order_id]
+            );
+
+            const ticketCodes = [];
+            for (let index = 0; index < Number(order.quantity); index += 1) {
+                const ticketCode = randomUUID();
+                ticketCodes.push(ticketCode);
+                await connection.query(
+                    `INSERT INTO Purchased_Tickets (user_id, event_id, ticket_code) VALUES (?, ?, ?)`,
+                    [order.user_id, order.event_id, ticketCode]
+                );
+                await connection.query(
+                    `INSERT INTO Tickets (order_id, tier_id, user_id, ticket_code, is_scanned, created_at) VALUES (?, ?, ?, ?, 0, NOW())`,
+                    [order.order_id, order.tier_id, order.user_id, ticketCode]
+                );
+            }
+            await connection.commit();
+            return { found: true, status: 'paid', tickets: ticketCodes };
+        }
+
+        const reason = outcome.failureReason || 'M-Pesa payment was not completed.';
+        await connection.query(
+            `UPDATE Orders SET payment_status = 'failed', payment_failure_reason = ? WHERE order_id = ?`,
+            [reason, order.order_id]
+        );
+        await connection.commit();
+        return { found: true, status: 'failed', tickets: [], failureReason: reason };
+    } catch (error) {
+        await connection.rollback();
+        throw error;
+    } finally {
+        connection.release();
+    }
+}
+
+app.post('/api/payments/stk-push', async (req, res) => {
+    const {
+        user_id: rawUserId, event_id: rawEventId, tier_id: rawTierId, quantity: rawQuantity,
+        attendee_name: rawAttendeeName, attendee_email: rawAttendeeEmail, phone_number: rawPhone
+    } = req.body || {};
+    const userId = Number(rawUserId);
+    const eventId = Number(rawEventId);
+    const tierId = Number(rawTierId);
+    const quantity = Number(rawQuantity);
+    const attendeeName = String(rawAttendeeName || '').trim();
+    const attendeeEmail = String(rawAttendeeEmail || '').trim();
+
+    if (![userId, eventId, tierId].every((value) => Number.isSafeInteger(value) && value > 0)
+        || !Number.isSafeInteger(quantity) || quantity < 1 || quantity > 10
+        || !attendeeName || attendeeName.length > 255
+        || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(attendeeEmail)) {
+        return res.status(400).json({ error: 'Provide a valid user, event, tier, quantity (1–10), attendee name, and email.' });
+    }
+    let phoneNumber;
+    try {
+        phoneNumber = normalizeKenyanPhone(rawPhone);
+    } catch (error) {
+        return res.status(400).json({ error: error.message });
+    }
+
+    const channelId = Number(process.env.PAYHERO_CHANNEL_ID);
+    if (!Number.isSafeInteger(channelId) || channelId <= 0 || !process.env.PAYHERO_CALLBACK_URL) {
+        return res.status(503).json({ error: 'PayHero channel and callback configuration are incomplete.' });
+    }
+
+    const connection = await pool.getConnection();
+    let order;
+    try {
+        await connection.beginTransaction();
+        const [users] = await connection.query(`SELECT user_id FROM Users WHERE user_id = ? LIMIT 1`, [userId]);
+        if (!users.length) {
+            await connection.rollback();
+            return res.status(404).json({ error: 'Account not found. Please sign in again.' });
+        }
+        const [tiers] = await connection.query(
+            `SELECT tt.tier_id, tt.event_id, tt.tier_name, tt.price, tt.capacity, tt.quantity_sold
+             FROM Ticket_Tiers tt
+             JOIN Events e ON e.event_id = tt.event_id
+             WHERE tt.tier_id = ? AND tt.event_id = ? AND e.approval_status = 'approved'
+             LIMIT 1 FOR UPDATE`,
+            [tierId, eventId]
+        );
+        if (!tiers.length) {
+            await connection.rollback();
+            return res.status(404).json({ error: 'That ticket tier is not available for this event.' });
+        }
+        const tier = tiers[0];
+        const unitPrice = Number(tier.price);
+        const totalAmount = unitPrice * quantity;
+        if (!Number.isSafeInteger(unitPrice) || unitPrice <= 0 || !Number.isSafeInteger(totalAmount) || totalAmount <= 0) {
+            await connection.rollback();
+            return res.status(400).json({ error: 'This ticket tier does not have a valid M-Pesa price.' });
+        }
+
+        if (tier.capacity != null) {
+            const [pendingRows] = await connection.query(
+                `SELECT quantity FROM Orders
+                 WHERE tier_id = ? AND payment_status = 'pending'
+                   AND created_at >= DATE_SUB(NOW(), INTERVAL 30 MINUTE)`,
+                [tierId]
+            );
+            const reserved = pendingRows.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+            const available = Number(tier.capacity) - Number(tier.quantity_sold || 0) - reserved;
+            if (available < quantity) {
+                await connection.rollback();
+                return res.status(409).json({ error: 'There are not enough tickets left in this tier.' });
+            }
+        }
+
+        const externalReference = `TWENDE-${Date.now()}-${randomUUID().toUpperCase()}`;
+        const [insertResult] = await connection.query(
+            `INSERT INTO Orders
+                (user_id, event_id, total_amount, checkout_phone, payment_status, external_reference,
+                 tier_id, quantity, attendee_name, attendee_email, created_at)
+             VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, NOW())`,
+            [userId, eventId, totalAmount, phoneNumber, externalReference, tierId, quantity, attendeeName, attendeeEmail]
+        );
+        order = { orderId: insertResult.insertId, externalReference, totalAmount, eventId, tierId, quantity, attendeeName };
+        await connection.commit();
+    } catch (error) {
+        await connection.rollback();
+        console.error('Could not create pending M-Pesa order:', error);
+        return res.status(500).json({ error: 'Could not create your payment order.' });
+    } finally {
+        connection.release();
+    }
+
+    try {
+        const payHeroResponse = await payHeroRequest('https://backend.payhero.co.ke/api/v2/payments', {
+            method: 'POST',
+            body: JSON.stringify({
+                amount: order.totalAmount,
+                phone_number: phoneNumber,
+                channel_id: channelId,
+                provider: 'm-pesa',
+                external_reference: order.externalReference,
+                customer_name: order.attendeeName,
+                callback_url: process.env.PAYHERO_CALLBACK_URL
+            })
+        });
+        const payheroReference = payHeroResponse.reference || null;
+        const checkoutRequestId = payHeroResponse.CheckoutRequestID || null;
+        await pool.query(
+            `UPDATE Orders SET payhero_reference = ?, payhero_checkout_request_id = ? WHERE order_id = ?`,
+            [payheroReference, checkoutRequestId, order.orderId]
+        );
+        return res.status(200).json({
+            success: true,
+            orderId: order.orderId,
+            externalReference: order.externalReference,
+            payheroReference: payheroReference || checkoutRequestId
+        });
+    } catch (error) {
+        console.error('PayHero STK push request failed:', error.message);
+        if (error.status) {
+            await pool.query(
+                `UPDATE Orders SET payment_status = 'failed', payment_failure_reason = ? WHERE order_id = ? AND payment_status = 'pending'`,
+                [error.message.slice(0, 1000), order.orderId]
+            ).catch((updateError) => console.error('Could not mark PayHero order failed:', updateError.message));
+            return res.status(502).json({ error: 'PayHero could not start the M-Pesa request. Please try again.' });
+        }
+        // A network timeout can happen after PayHero accepted the request. Keep the order pending
+        // so its callback or the status reconciliation can still fulfill it without a duplicate charge.
+        return res.status(202).json({ success: true, orderId: order.orderId, externalReference: order.externalReference, payheroReference: null });
+    }
+});
+
+app.post('/api/payments/payhero-callback', async (req, res) => {
+    try {
+        const payload = req.body || {};
+        const response = payload.response || payload;
+        const externalReference = response.ExternalReference || response.external_reference || payload.external_reference;
+        const status = String(response.Status || response.status || '').toLowerCase();
+        const terminalFailureStatuses = ['failed', 'cancelled', 'canceled', 'expired', 'rejected'];
+        if (externalReference && (status === 'success' || terminalFailureStatuses.includes(status))) {
+            const [orders] = await pool.query(
+                `SELECT payhero_reference, payhero_checkout_request_id, payment_status
+                 FROM Orders WHERE external_reference = ? LIMIT 1`,
+                [externalReference]
+            );
+            if (!orders.length) {
+                console.warn('PayHero callback did not match a Twende order.');
+            } else if (String(orders[0].payment_status).toLowerCase() !== 'pending') {
+                // Repeated callbacks after settlement are safely ignored.
+            } else {
+                let reference = orders[0].payhero_reference || orders[0].payhero_checkout_request_id;
+                if (!reference && response.CheckoutRequestID) {
+                    reference = String(response.CheckoutRequestID);
+                    await pool.query(
+                        `UPDATE Orders SET payhero_checkout_request_id = ? WHERE external_reference = ? AND payment_status = 'pending'`,
+                        [reference, externalReference]
+                    );
+                }
+                if (!reference) {
+                    console.warn('PayHero callback ignored until the payment reference is saved or the order is pending.');
+                } else {
+                    const verified = await fetchPayHeroTransactionStatus(reference);
+                    const verifiedStatus = String(verified.status || verified.Status || '').toLowerCase();
+                    if (status === 'success' && verifiedStatus === 'success') {
+                        await applyPayHeroOutcome(externalReference, {
+                            status: 'paid',
+                            amount: response.Amount ?? response.amount ?? verified.amount ?? verified.Amount,
+                            receipt: response.MpesaReceiptNumber || response.mpesa_receipt_number || verified.MpesaReceiptNumber || verified.provider_reference || null
+                        });
+                    } else if (status !== 'success' && terminalFailureStatuses.includes(verifiedStatus)) {
+                        await applyPayHeroOutcome(externalReference, {
+                            status: 'failed',
+                            failureReason: response.ResultDesc || response.result_desc || verified.ResultDesc || 'M-Pesa payment failed or was cancelled.'
+                        });
+                    } else {
+                        console.warn('PayHero callback received, but the transaction is not terminal in PayHero yet.');
+                    }
+                }
+            }
+            }
+        } else {
+            console.warn('PayHero callback had no usable external reference/status.');
+        }
+    } catch (error) {
+        console.error('PayHero callback processing failed:', error);
+    }
+    // PayHero treats any non-2xx webhook response as retryable; the fulfillment is idempotent.
+    return res.status(200).json({ received: true });
+});
+
+app.get('/api/payments/status/:externalReference', async (req, res) => {
+    const externalReference = String(req.params.externalReference || '');
+    try {
+        const [orders] = await pool.query(
+            `SELECT order_id, payment_status, mpesa_receipt_number, payment_failure_reason,
+                    payhero_reference, payhero_checkout_request_id
+             FROM Orders WHERE external_reference = ? LIMIT 1`,
+            [externalReference]
+        );
+        if (!orders.length) return res.status(404).json({ error: 'Payment order not found.' });
+        let order = orders[0];
+
+        if (String(order.payment_status).toLowerCase() === 'pending') {
+            const reference = order.payhero_reference || order.payhero_checkout_request_id;
+            if (reference) {
+                try {
+                    const payHeroStatus = await fetchPayHeroTransactionStatus(reference);
+                    const status = String(payHeroStatus.status || payHeroStatus.Status || '').toLowerCase();
+                    if (status === 'success') {
+                        await applyPayHeroOutcome(externalReference, {
+                            status: 'paid',
+                            amount: payHeroStatus.amount ?? payHeroStatus.Amount,
+                            receipt: payHeroStatus.MpesaReceiptNumber || payHeroStatus.provider_reference || null
+                        });
+                    } else if (['failed', 'cancelled', 'canceled', 'expired', 'rejected'].includes(status)) {
+                        await applyPayHeroOutcome(externalReference, {
+                            status: 'failed',
+                            failureReason: payHeroStatus.ResultDesc || payHeroStatus.result_desc || 'M-Pesa payment failed or was cancelled.'
+                        });
+                    }
+                } catch (statusError) {
+                    console.warn('PayHero status fallback is not available yet:', statusError.message);
+                }
+            }
+            const [updatedOrders] = await pool.query(
+                `SELECT order_id, payment_status, mpesa_receipt_number, payment_failure_reason
+                 FROM Orders WHERE external_reference = ? LIMIT 1`,
+                [externalReference]
+            );
+            order = updatedOrders[0] || order;
+        }
+
+        let tickets = [];
+        if (String(order.payment_status).toLowerCase() === 'paid') {
+            const connection = await pool.getConnection();
+            try { tickets = await getOrderTicketCodes(connection, order.order_id); }
+            finally { connection.release(); }
+        }
+        return res.status(200).json({
+            status: String(order.payment_status || 'pending').toLowerCase(),
+            mpesaReceipt: order.mpesa_receipt_number || null,
+            failureReason: order.payment_failure_reason || null,
+            tickets
+        });
+    } catch (error) {
+        console.error('Payment status lookup failed:', error);
+        return res.status(500).json({ error: 'Could not check payment status right now.' });
+    }
 });
 
 // User Login Route (Accepts Email OR Phone Number)
@@ -512,23 +908,9 @@ app.delete('/api/admin/users/:id', async (req, res) => {
     }
 });
 
-const { v4: uuidv4 } = require('uuid');
-
-// 1. Mock Purchase Route (To test QR generation)
-app.post('/api/tickets/mock-purchase', async (req, res) => {
-    try {
-        const { user_id, event_id } = req.body;
-        const ticket_code = uuidv4(); // Generates a secure, random string like '1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed'
-
-        await pool.query(
-            `INSERT INTO Purchased_Tickets (user_id, event_id, ticket_code) VALUES (?, ?, ?)`,
-            [user_id, event_id, ticket_code]
-        );
-        res.status(201).json({ message: 'Ticket generated successfully!', ticket_code });
-    } catch (error) {
-        console.error('Error generating ticket:', error);
-        res.status(500).json({ error: 'Failed to generate ticket' });
-    }
+// Mock ticket issuance is disabled so unpaid orders cannot generate gate-valid tickets.
+app.post('/api/tickets/mock-purchase', (req, res) => {
+    res.status(410).json({ error: 'Mock ticket purchases are disabled. Use the M-Pesa checkout.' });
 });
 
 // 2. Fetch a user's purchased tickets
