@@ -163,6 +163,10 @@ async function ensurePaymentSchema() {
                     await connection.query('ALTER TABLE `Orders` MODIFY COLUMN `user_id` INT NULL');
                     console.log('[schema] Updated Orders.user_id to allow NULL');
                 }
+                // The deployed schema may define this as an ENUM without a paid value.
+                // Normalize it on every startup before payment routes can update orders.
+                await connection.query("ALTER TABLE `Orders` MODIFY COLUMN `payment_status` VARCHAR(32) NOT NULL DEFAULT 'pending'");
+                console.log('[schema] Ensured Orders.payment_status accepts payment states');
             }
         }
     } finally {
