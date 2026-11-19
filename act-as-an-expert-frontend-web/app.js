@@ -1225,10 +1225,11 @@ loadEventDetails();
   const payButton = document.querySelector('#mpesa-pay-button');
   const cancelButton = document.querySelector('#mpesa-cancel');
   const tryAgainButton = document.querySelector('#mpesa-try-again');
+  const goToTicketsButton = document.querySelector('#mpesa-go-tickets');
   let checkoutContext = null;
   let activePayment = null;
   let pollTimer = null;
-  let elapsedSeconds = 0;
+  let pollingAttempts = 0;
   let pollInProgress = false;
   let successRedirectTimer = null;
 
@@ -1283,6 +1284,7 @@ loadEventDetails();
     paymentError.textContent = reason || 'The payment was cancelled or declined. You can try again.';
     paymentError.hidden = false;
     countdownLabel.hidden = true;
+    if (goToTicketsButton) goToTicketsButton.hidden = true;
     tryAgainButton.hidden = false;
     showStep(stepTwo);
     modal.classList.remove('hidden');
@@ -1295,45 +1297,62 @@ loadEventDetails();
     if (successRedirectTimer) window.clearTimeout(successRedirectTimer);
     const receipt = paymentStatus.mpesaReceipt || 'Receipt pending';
     document.querySelector('#mpesa-receipt-code').textContent = receipt;
-    const count = Array.isArray(paymentStatus.tickets) ? paymentStatus.tickets.length : checkoutContext?.quantity || 1;
-    document.querySelector('#mpesa-success-message').textContent = `${count} ticket${count === 1 ? '' : 's'} issued and ready in your My Tickets dashboard.`;
+    document.querySelector('#mpesa-success-message').textContent = `M-Pesa Receipt: ${receipt} — Your QR tickets have been issued. Redirecting to My Tickets...`;
+    document.querySelector('.mpesa-receipt-note')?.setAttribute('hidden', '');
     activePayment = null;
     const viewTicketLink = document.querySelector('.mpesa-view-ticket');
     if (viewTicketLink) {
-      viewTicketLink.href = 'user-dashboard.html?new_ticket=1';
-      viewTicketLink.innerHTML = 'View &amp; Download My Ticket <span aria-hidden="true">→</span>';
+      viewTicketLink.href = 'user-dashboard.html';
+      viewTicketLink.textContent = 'View & Download Tickets';
     }
     showStep(stepThree);
     modal.classList.remove('hidden');
     modal.setAttribute('aria-hidden', 'false');
     document.body.classList.add('mpesa-modal-open');
     successRedirectTimer = window.setTimeout(() => {
-      window.location.href = 'user-dashboard.html?new_ticket=1';
-    }, 1800);
+      window.location.href = 'user-dashboard.html';
+    }, 2000);
+  };
+
+  const showPollingTimeout = () => {
+    stopPolling();
+    activePayment = null;
+    spinner.hidden = true;
+    waitTitle.textContent = 'Payment is still being verified';
+    progressMessage.textContent = 'Payment is still being verified by M-Pesa. Check My Tickets in a moment—your tickets will appear automatically once confirmed.';
+    countdownLabel.hidden = true;
+    cancelButton.hidden = true;
+    tryAgainButton.hidden = true;
+    if (goToTicketsButton) goToTicketsButton.hidden = false;
+    showStep(stepTwo);
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('mpesa-modal-open');
   };
 
   const startPolling = (externalReference) => {
     stopPolling();
-    const pollingStartedAt = Date.now();
-    elapsedSeconds = 0;
+    pollingAttempts = 0;
     pollInProgress = false;
     countdownLabel.hidden = false;
+    cancelButton.hidden = false;
+    if (goToTicketsButton) goToTicketsButton.hidden = true;
     tryAgainButton.hidden = true;
     paymentError.hidden = true;
     spinner.hidden = false;
-    waitTitle.textContent = 'Check your phone...';
+    waitTitle.textContent = 'Confirming your payment';
+    progressMessage.textContent = 'Confirming your M-Pesa payment...';
     countdown.textContent = '01:00';
     pollTimer = window.setInterval(async () => {
       if (!activePayment || activePayment.externalReference !== externalReference) return;
-      elapsedSeconds = Math.floor((Date.now() - pollingStartedAt) / 1000);
-      countdown.textContent = `00:${String(Math.max(0, 60 - elapsedSeconds)).padStart(2, '0')}`;
-      if (elapsedSeconds >= 60) {
-        spinner.hidden = true;
-        waitTitle.textContent = 'Still waiting for confirmation';
-        progressMessage.textContent = 'Your payment may still be processing. We will keep checking and update this screen as soon as it is confirmed.';
-        countdownLabel.hidden = true;
-      }
       if (pollInProgress) return;
+      if (pollingAttempts >= 24) {
+        showPollingTimeout();
+        return;
+      }
+      pollingAttempts += 1;
+      const remainingSeconds = Math.max(0, 60 - Math.ceil(pollingAttempts * 2.5));
+      countdown.textContent = `00:${String(remainingSeconds).padStart(2, '0')}`;
       pollInProgress = true;
       try {
         const response = await fetch(`${API_BASE_URL}/api/payments/status/${encodeURIComponent(externalReference)}`, {
@@ -1355,8 +1374,9 @@ loadEventDetails();
         console.warn('Payment status check failed; will retry:', error.message);
       } finally {
         pollInProgress = false;
+        if (pollingAttempts >= 24 && activePayment?.externalReference === externalReference) showPollingTimeout();
       }
-    }, 3000);
+    }, 2500);
   };
 
   document.querySelector('#mpesa-close')?.addEventListener('click', closeModal);
@@ -1371,6 +1391,8 @@ loadEventDetails();
     submitError.hidden = true;
     spinner.hidden = false;
     countdownLabel.hidden = false;
+    cancelButton.hidden = false;
+    if (goToTicketsButton) goToTicketsButton.hidden = true;
     tryAgainButton.hidden = true;
     showStep(stepOne);
     document.querySelector('#mpesa-phone')?.focus();

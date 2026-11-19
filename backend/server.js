@@ -741,7 +741,6 @@ app.post('/api/payments/payhero-callback', async (req, res) => {
 app.get('/api/payments/status/:externalReference', authenticateUser, async (req, res) => {
     const externalReference = String(req.params.externalReference || '');
     try {
-        await reconcilePendingOrdersForUser(req.user);
         const [orders] = await pool.query(
             `SELECT order_id, external_reference, user_id, attendee_email, phone_number, checkout_phone,
                     payment_status, mpesa_receipt_number, payment_failure_reason,
@@ -772,6 +771,7 @@ app.get('/api/payments/status/:externalReference', authenticateUser, async (req,
                 status: 'paid',
                 payment_status: 'paid',
                 mpesaReceipt: order.mpesa_receipt_number || null,
+                message: 'Payment confirmed! Your tickets are ready.',
                 tickets
             });
         }
@@ -789,12 +789,18 @@ app.get('/api/payments/status/:externalReference', authenticateUser, async (req,
                         status: 'paid',
                         payment_status: 'paid',
                         mpesaReceipt: receipt,
+                        message: 'Payment confirmed! Your tickets are ready.',
                         tickets: result.tickets || []
                     });
                 }
                 if (payHeroStatus.failed) {
-                    await markOrderFailed(order.order_id,
-                        payHeroStatus.failureReason || 'M-Pesa payment failed or was cancelled.');
+                    const failureReason = payHeroStatus.failureReason || 'M-Pesa payment failed or was cancelled.';
+                    await markOrderFailed(order.order_id, failureReason);
+                    return res.status(200).json({
+                        status: 'failed',
+                        payment_status: 'failed',
+                        failureReason
+                    });
                 }
             } catch (statusError) {
                 console.error(`[PayHero Status Check] Failed for order ${order.order_id}:`, statusError);

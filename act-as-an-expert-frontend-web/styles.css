@@ -724,6 +724,7 @@ body.mpesa-modal-open { overflow: hidden; }
 .mpesa-view-ticket { margin-top: 24px; background: #e60000; }
 .mpesa-view-ticket:hover { background: #c90000; }
 .mpesa-view-ticket span { font-size: 18px; }
+.mpesa-view-ticket[hidden] { display: none !important; }
 @media (max-width: 480px) { .modal-overlay { padding: 14px; } .mpesa-modal-card { width: 100%; padding: 27px 20px 22px; border-radius: 14px; } .mpesa-title-row h2, .mpesa-step > h2 { font-size: 22px; } }
 /* Event Details API Loading and Error States */
 .event-detail-status { max-width: 1170px; margin: 24px auto; padding: 16px 19px; border: 1px solid #e8e4e2; border-radius: 9px; background: #fff; color: #625b58; font-size: 13px; }
