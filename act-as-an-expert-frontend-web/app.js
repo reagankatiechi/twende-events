@@ -1596,6 +1596,161 @@ async function deleteEvent(eventId) {
   else window.addEventListener('twende:admin-unlocked', loadAdminDashboard, { once: true });
 })();
 
+// Passcode-protected revenue analytics, attendee filtering, and CSV manifest export.
+(() => {
+  const analyticsRoot = document.querySelector('#sales-analytics');
+  if (!analyticsRoot) return;
+
+  const eventFilter = document.querySelector('#analytics-event-filter');
+  const refreshButton = document.querySelector('#analytics-refresh');
+  const exportButton = document.querySelector('#analytics-export');
+  const searchInput = document.querySelector('#manifest-search');
+  const tierBody = document.querySelector('#analytics-tiers-body');
+  const attendeeBody = document.querySelector('#analytics-attendees-body');
+  const feedback = document.querySelector('#analytics-feedback');
+  const statusButtons = [...document.querySelectorAll('[data-manifest-status]')];
+  let attendeeRows = [];
+  let selectedStatus = 'all';
+
+  const escapeAnalytics = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[character]);
+  const numberValue = (value) => Number(value || 0).toLocaleString('en-KE');
+  const kesValue = (value) => `KES ${Number(value || 0).toLocaleString('en-KE', { maximumFractionDigits: 2 })}`;
+  const formatAnalyticsDate = (value) => {
+    if (!value) return '—';
+    const raw = String(value);
+    const parsed = new Date(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(raw) ? raw.replace(' ', 'T') : raw);
+    if (Number.isNaN(parsed.getTime())) return escapeAnalytics(raw);
+    return new Intl.DateTimeFormat('en-KE', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(parsed);
+  };
+
+  const getFilteredAttendees = () => {
+    const query = String(searchInput?.value || '').trim().toLowerCase();
+    return attendeeRows.filter((row) => {
+      const status = String(row.status || '').toLowerCase();
+      const matchesStatus = selectedStatus === 'all' || status === selectedStatus;
+      const haystack = [row.attendee_name, row.phone_number, row.ticket_code, row.mpesa_receipt, row.email]
+        .join(' ').toLowerCase();
+      return matchesStatus && (!query || haystack.includes(query));
+    });
+  };
+
+  const renderAttendees = () => {
+    const filtered = getFilteredAttendees();
+    if (!filtered.length) {
+      attendeeBody.innerHTML = `<tr><td colspan="8" class="analytics-empty">${attendeeRows.length ? 'No attendees match these filters.' : 'No issued tickets for this selection yet.'}</td></tr>`;
+      return;
+    }
+    attendeeBody.innerHTML = filtered.map((row) => {
+      const status = String(row.status || 'valid').toLowerCase();
+      const badgeClass = status === 'used' ? 'is-used' : 'is-valid';
+      return `<tr>
+        <td><code class="manifest-ticket-code">${escapeAnalytics(row.ticket_code || '—')}</code></td>
+        <td><strong>${escapeAnalytics(row.attendee_name || 'Guest Attendee')}</strong><small class="manifest-email">${escapeAnalytics(row.email || 'N/A')}</small></td>
+        <td>${escapeAnalytics(row.phone_number || 'N/A')}</td>
+        <td>${escapeAnalytics(row.event_title || 'Event unavailable')}</td>
+        <td>${escapeAnalytics(row.tier_name || 'General')}</td>
+        <td><code>${escapeAnalytics(row.mpesa_receipt || 'N/A')}</code></td>
+        <td>${formatAnalyticsDate(row.purchase_date)}</td>
+        <td><span class="manifest-status ${badgeClass}">${escapeAnalytics(status === 'used' ? 'Used' : 'Valid')}</span></td>
+      </tr>`;
+    }).join('');
+  };
+
+  const renderAnalytics = (data) => {
+    const summary = data.summary || {};
+    const issued = Number(summary.totalTicketsIssued || 0);
+    const used = Number(summary.ticketsUsedCount || 0);
+    const valid = Number(summary.ticketsValidCount || 0);
+    const checkinRate = issued ? Math.round((used / issued) * 100) : 0;
+    document.querySelector('#analytics-revenue').textContent = kesValue(summary.totalRevenueKes);
+    document.querySelector('#analytics-tickets').textContent = numberValue(issued);
+    document.querySelector('#analytics-orders-caption').textContent = `Across ${numberValue(summary.paidOrdersCount)} paid orders`;
+    document.querySelector('#analytics-checkins').textContent = `${numberValue(used)} / ${numberValue(issued)}`;
+    document.querySelector('#analytics-checkin-rate').textContent = `${checkinRate}% of issued tickets`;
+    document.querySelector('#analytics-valid').textContent = numberValue(valid);
+
+    const events = Array.isArray(data.events) ? data.events : [];
+    const chosenEvent = eventFilter.value;
+    eventFilter.innerHTML = '<option value="">All Events</option>' + events.map((event) =>
+      `<option value="${escapeAnalytics(event.event_id)}">${escapeAnalytics(event.title || `Event #${event.event_id}`)}</option>`
+    ).join('');
+    eventFilter.value = events.some((event) => String(event.event_id) === chosenEvent) ? chosenEvent : '';
+
+    const tiers = Array.isArray(data.tierBreakdown) ? data.tierBreakdown : [];
+    tierBody.innerHTML = tiers.length ? tiers.map((tier) => {
+      const remaining = tier.remaining_quantity == null ? null : Number(tier.remaining_quantity);
+      const sold = Number(tier.tickets_sold || 0);
+      const progress = remaining == null ? 0 : (sold + remaining ? Math.min(100, Math.round((sold / (sold + remaining)) * 100)) : 0);
+      return `<tr>
+        <td><strong>${escapeAnalytics(tier.event_title || 'Event unavailable')}</strong></td>
+        <td>${escapeAnalytics(tier.tier_name || 'General')}</td>
+        <td>${kesValue(tier.price)}</td>
+        <td>${numberValue(sold)}</td>
+        <td><div class="tier-stock-cell"><span>${remaining == null ? 'Unlimited' : numberValue(remaining)}</span><span class="tier-stock-track"><span style="width:${progress}%"></span></span></div></td>
+        <td><strong>${kesValue(tier.revenue_kes)}</strong></td>
+      </tr>`;
+    }).join('') : '<tr><td colspan="6" class="analytics-empty">No ticket tiers are available for this selection.</td></tr>';
+
+    attendeeRows = Array.isArray(data.attendees) ? data.attendees : [];
+    renderAttendees();
+  };
+
+  const loadAnalytics = async () => {
+    feedback.textContent = 'Loading current revenue and ticket data…';
+    refreshButton.disabled = true;
+    const query = eventFilter.value ? `?event_id=${encodeURIComponent(eventFilter.value)}` : '';
+    try {
+      const response = await window.adminFetch(`${API_BASE_URL}/api/admin/analytics${query}`);
+      if (!response.ok) throw new Error(`Analytics request failed (${response.status})`);
+      renderAnalytics(await response.json());
+      feedback.textContent = `Updated ${new Intl.DateTimeFormat('en-KE', { hour: 'numeric', minute: '2-digit' }).format(new Date())}`;
+    } catch (error) {
+      console.error('Unable to load admin analytics:', error);
+      feedback.textContent = 'Analytics could not be loaded. Refresh to try again.';
+      tierBody.innerHTML = '<tr><td colspan="6" class="analytics-empty is-error">Analytics could not be loaded.</td></tr>';
+      attendeeBody.innerHTML = '<tr><td colspan="8" class="analytics-empty is-error">The attendee manifest could not be loaded.</td></tr>';
+    } finally {
+      refreshButton.disabled = false;
+    }
+  };
+
+  refreshButton.addEventListener('click', loadAnalytics);
+  eventFilter.addEventListener('change', loadAnalytics);
+  searchInput.addEventListener('input', renderAttendees);
+  statusButtons.forEach((button) => button.addEventListener('click', () => {
+    selectedStatus = button.dataset.manifestStatus;
+    statusButtons.forEach((item) => {
+      const active = item === button;
+      item.classList.toggle('is-active', active);
+      item.setAttribute('aria-pressed', String(active));
+    });
+    renderAttendees();
+  }));
+  exportButton.addEventListener('click', () => {
+    const columns = ['Ticket Code', 'Attendee Name', 'Phone Number', 'Email', 'Event', 'Tier', 'M-Pesa Receipt', 'Purchase Date', 'Status'];
+    const quoteCsv = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+    const rows = getFilteredAttendees().map((row) => [
+      row.ticket_code, row.attendee_name, row.phone_number, row.email, row.event_title,
+      row.tier_name, row.mpesa_receipt, row.purchase_date, row.status
+    ]);
+    const csv = [columns, ...rows].map((row) => row.map(quoteCsv).join(',')).join('\r\n');
+    const blob = new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8' });
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = `twende-events-manifest-${new Date().toLocaleDateString('sv-SE')}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+  });
+
+  if (window.adminAccessReady) loadAnalytics();
+  else window.addEventListener('twende:admin-unlocked', loadAnalytics, { once: true });
+})();
+
 async function deleteUser(userId) {
   if (!window.confirm('Are you sure you want to delete this user?')) return;
   try {

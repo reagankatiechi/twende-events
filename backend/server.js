@@ -249,6 +249,94 @@ app.post('/api/admin/verify-passcode', (req, res) => {
 // All admin API routes require a verified passcode token (x-admin-token or Bearer).
 app.use('/api/admin', requireAdminAccess);
 
+// Protected reporting data for the passcode-unlocked admin dashboard.
+app.get('/api/admin/analytics', async (req, res) => {
+    const rawEventId = String(req.query.event_id || '').trim();
+    const eventId = rawEventId ? Number(rawEventId) : null;
+    if (rawEventId && (!Number.isSafeInteger(eventId) || eventId < 1)) {
+        return res.status(400).json({ error: 'event_id must be a positive integer.' });
+    }
+
+    try {
+        const [[revenueSummary]] = await pool.query(
+            `SELECT COALESCE(SUM(o.total_amount), 0) AS totalRevenueKes,
+                    COUNT(DISTINCT o.order_id) AS paidOrdersCount
+             FROM Orders o
+             LEFT JOIN Events e ON e.event_id = o.event_id
+             WHERE LOWER(o.payment_status) IN ('paid', 'completed')
+               AND (? IS NULL OR e.event_id = ?)` ,
+            [eventId, eventId]
+        );
+        const [[ticketSummary]] = await pool.query(
+            `SELECT COUNT(pt.ticket_id) AS totalTicketsIssued,
+                    COALESCE(SUM(CASE WHEN LOWER(COALESCE(pt.status, '')) = 'used' THEN 1 ELSE 0 END), 0) AS ticketsUsedCount,
+                    COALESCE(SUM(CASE WHEN LOWER(COALESCE(pt.status, '')) = 'valid' THEN 1 ELSE 0 END), 0) AS ticketsValidCount
+             FROM Purchased_Tickets pt
+             LEFT JOIN Orders o ON o.order_id = pt.order_id
+             LEFT JOIN Events e ON e.event_id = COALESCE(pt.event_id, o.event_id)
+             WHERE (? IS NULL OR e.event_id = ?)` ,
+            [eventId, eventId]
+        );
+        const [events] = await pool.query(
+            `SELECT event_id, title, start_time AS event_date, venue
+             FROM Events
+             ORDER BY start_time DESC, event_id DESC`
+        );
+        const [tierBreakdown] = await pool.query(
+            `SELECT e.event_id, e.title AS event_title, tt.tier_id, tt.tier_name, tt.price,
+                    COUNT(pt.ticket_id) AS tickets_sold,
+                    CASE WHEN tt.capacity IS NULL THEN NULL
+                         ELSE GREATEST(tt.capacity - COALESCE(tt.quantity_sold, 0), 0)
+                    END AS remaining_quantity,
+                    COALESCE(COUNT(pt.ticket_id) * tt.price, 0) AS revenue_kes
+             FROM Ticket_Tiers tt
+             LEFT JOIN Events e ON e.event_id = tt.event_id
+             LEFT JOIN Purchased_Tickets pt
+               ON pt.tier_id = tt.tier_id AND COALESCE(pt.event_id, tt.event_id) = tt.event_id
+             WHERE (? IS NULL OR e.event_id = ?)
+             GROUP BY e.event_id, e.title, tt.tier_id, tt.tier_name, tt.price, tt.capacity, tt.quantity_sold
+             ORDER BY e.start_time DESC, e.event_id DESC, tt.tier_id ASC` ,
+            [eventId, eventId]
+        );
+        const [attendees] = await pool.query(
+            `SELECT pt.ticket_id, pt.ticket_code, pt.status, pt.purchase_date,
+                    COALESCE(NULLIF(u.full_name, ''), NULLIF(o.attendee_name, ''), 'Guest Attendee') AS attendee_name,
+                    COALESCE(NULLIF(o.phone_number, ''), NULLIF(o.checkout_phone, ''), NULLIF(u.phone_number, ''), 'N/A') AS phone_number,
+                    COALESCE(NULLIF(u.email, ''), NULLIF(o.attendee_email, ''), 'N/A') AS email,
+                    COALESCE(pt.event_id, o.event_id, e.event_id) AS event_id,
+                    e.title AS event_title,
+                    COALESCE(NULLIF(tt.tier_name, ''), 'General') AS tier_name,
+                    COALESCE(o.total_amount, 0) AS amount_paid,
+                    COALESCE(NULLIF(o.mpesa_receipt_number, ''), 'N/A') AS mpesa_receipt
+             FROM Purchased_Tickets pt
+             LEFT JOIN Tickets t ON t.ticket_code = pt.ticket_code
+             LEFT JOIN Orders o ON o.order_id = COALESCE(t.order_id, pt.order_id)
+             LEFT JOIN Users u ON u.user_id = COALESCE(pt.user_id, o.user_id)
+             LEFT JOIN Events e ON e.event_id = COALESCE(pt.event_id, o.event_id)
+             LEFT JOIN Ticket_Tiers tt ON tt.tier_id = COALESCE(pt.tier_id, t.tier_id, o.tier_id)
+             WHERE (? IS NULL OR COALESCE(pt.event_id, o.event_id, e.event_id) = ?)
+             ORDER BY pt.purchase_date DESC, pt.ticket_id DESC` ,
+            [eventId, eventId]
+        );
+
+        return res.status(200).json({
+            summary: {
+                totalRevenueKes: Number(revenueSummary?.totalRevenueKes || 0),
+                paidOrdersCount: Number(revenueSummary?.paidOrdersCount || 0),
+                totalTicketsIssued: Number(ticketSummary?.totalTicketsIssued || 0),
+                ticketsUsedCount: Number(ticketSummary?.ticketsUsedCount || 0),
+                ticketsValidCount: Number(ticketSummary?.ticketsValidCount || 0)
+            },
+            events,
+            tierBreakdown,
+            attendees
+        });
+    } catch (error) {
+        console.error('Error loading admin revenue analytics:', error);
+        return res.status(500).json({ error: 'Failed to load revenue analytics.' });
+    }
+});
+
 function payHeroAuthorization() {
     const username = process.env.PAYHERO_API_USERNAME;
     const password = process.env.PAYHERO_API_PASSWORD;
