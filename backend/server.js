@@ -169,6 +169,15 @@ async function ensurePaymentSchema() {
                 console.log('[schema] Ensured Orders.payment_status accepts payment states');
             }
         }
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS Saved_Events (
+                id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                user_id INT NOT NULL,
+                event_id INT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY unique_user_event (user_id, event_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        `);
     } finally {
         connection.release();
     }
@@ -1409,7 +1418,141 @@ app.post('/api/tickets/mock-purchase', (req, res) => {
     res.status(410).json({ error: 'Mock ticket purchases are disabled. Use the M-Pesa checkout.' });
 });
 
-// 2. Fetch a user's purchased tickets
+// Consolidated attendee hub data; reconciliation runs before the wallet is read.
+app.get('/api/user/dashboard', authenticateUser, async (req, res) => {
+    try {
+        await reconcilePendingOrdersForUser(req.user);
+        const userId = req.authUser.user_id;
+        const [userRows] = await pool.query(
+            `SELECT user_id, full_name, email, phone_number FROM Users WHERE user_id = ? LIMIT 1`,
+            [userId]
+        );
+        if (!userRows.length) return res.status(404).json({ error: 'User account not found.' });
+        const account = userRows[0];
+        const phoneDigits = lastNinePhoneDigits(account.phone_number);
+
+        const [tickets] = await pool.query(
+            `SELECT pt.ticket_id, pt.ticket_code, pt.status, pt.purchase_date,
+                    COALESCE(NULLIF(u.full_name, ''), NULLIF(o.attendee_name, ''), pt.attendee_name, 'Guest Attendee') AS attendee_name,
+                    e.event_id, e.title AS event_title, e.start_time AS event_date, TIME(e.start_time) AS event_time,
+                    e.venue, e.city AS location, e.poster_url,
+                    COALESCE(NULLIF(tt.tier_name, ''), 'General') AS tier_name,
+                    o.mpesa_receipt_number,
+                    CASE WHEN LOWER(COALESCE(pt.status, '')) = 'used' OR COALESCE(t.is_scanned, 0) = 1 THEN 'used' ELSE 'valid' END AS ticket_status
+             FROM Purchased_Tickets pt
+             LEFT JOIN Tickets t ON t.ticket_code = pt.ticket_code
+             LEFT JOIN Orders o ON o.order_id = COALESCE(t.order_id, pt.order_id)
+             LEFT JOIN Users u ON u.user_id = COALESCE(pt.user_id, o.user_id)
+             LEFT JOIN Events e ON e.event_id = COALESCE(pt.event_id, o.event_id)
+             LEFT JOIN Ticket_Tiers tt ON tt.tier_id = COALESCE(pt.tier_id, t.tier_id, o.tier_id)
+             WHERE pt.user_id = ? OR o.user_id = ? OR LOWER(o.attendee_email) = LOWER(?)
+                OR (o.user_id IS NULL AND ? <> '' AND RIGHT(REPLACE(COALESCE(NULLIF(o.phone_number, ''), o.checkout_phone), '+', ''), 9) = ?)
+             ORDER BY pt.purchase_date DESC, pt.ticket_id DESC`,
+            [userId, userId, account.email, phoneDigits, phoneDigits]
+        );
+        const [orders] = await pool.query(
+            `SELECT o.order_id, o.event_id, e.title AS event_title,
+                    COALESCE(NULLIF(tt.tier_name, ''), 'General') AS tier_name,
+                    o.quantity, o.total_amount, COALESCE(NULLIF(o.phone_number, ''), NULLIF(o.checkout_phone, ''), u.phone_number, 'N/A') AS phone_number,
+                    o.mpesa_receipt_number, o.payment_status, o.external_reference, o.created_at
+             FROM Orders o
+             LEFT JOIN Events e ON e.event_id = o.event_id
+             LEFT JOIN Ticket_Tiers tt ON tt.tier_id = o.tier_id
+             LEFT JOIN Users u ON u.user_id = o.user_id
+             WHERE o.user_id = ? OR (? <> '' AND RIGHT(REPLACE(COALESCE(NULLIF(o.phone_number, ''), o.checkout_phone), '+', ''), 9) = ?)
+             ORDER BY o.created_at DESC, o.order_id DESC`,
+            [userId, phoneDigits, phoneDigits]
+        );
+        const [savedEvents] = await pool.query(
+            `SELECT se.id AS saved_event_id, se.event_id, se.created_at,
+                    e.title, e.category, e.start_time AS event_date, TIME(e.start_time) AS event_time,
+                    e.venue, e.city AS location, e.poster_url
+             FROM Saved_Events se
+             LEFT JOIN Events e ON e.event_id = se.event_id
+             WHERE se.user_id = ?
+             ORDER BY se.created_at DESC`,
+            [userId]
+        );
+
+        return res.status(200).json({
+            user: { id: account.user_id, full_name: account.full_name, email: account.email, phone_number: account.phone_number },
+            tickets,
+            orders,
+            savedEvents
+        });
+    } catch (error) {
+        console.error('Error loading attendee dashboard:', error);
+        return res.status(500).json({ error: 'Failed to load your dashboard.' });
+    }
+});
+
+app.put('/api/user/profile', authenticateUser, async (req, res) => {
+    const fullName = String(req.body?.full_name || '').trim();
+    const phoneInput = String(req.body?.phone_number || '').trim();
+    if (!fullName) return res.status(400).json({ error: 'Full name is required.' });
+    let phoneNumber;
+    try { phoneNumber = normalizeKenyanPhone(phoneInput); }
+    catch (_) { return res.status(400).json({ error: 'Enter a valid Kenyan phone number: 07XXXXXXXX, 01XXXXXXXX, or +254XXXXXXXXX.' }); }
+
+    try {
+        const userId = req.authUser.user_id;
+        await pool.query(
+            `UPDATE Users SET full_name = ?, phone_number = ? WHERE user_id = ?`,
+            [fullName, phoneNumber, userId]
+        );
+        const [rows] = await pool.query(
+            `SELECT user_id, full_name, email, phone_number FROM Users WHERE user_id = ? LIMIT 1`,
+            [userId]
+        );
+        if (!rows.length) return res.status(404).json({ error: 'User account not found.' });
+        const row = rows[0];
+        return res.status(200).json({ success: true, user: { id: row.user_id, user_id: row.user_id, full_name: row.full_name, email: row.email, phone_number: row.phone_number } });
+    } catch (error) {
+        console.error('Error updating attendee profile:', error);
+        return res.status(500).json({ error: 'Could not update your profile.' });
+    }
+});
+
+app.post('/api/user/saved-events/:eventId', authenticateUser, async (req, res) => {
+    const eventId = Number(req.params.eventId);
+    if (!Number.isSafeInteger(eventId) || eventId < 1) return res.status(400).json({ error: 'Invalid event ID.' });
+    try {
+        const [events] = await pool.query(`SELECT event_id FROM Events WHERE event_id = ? LIMIT 1`, [eventId]);
+        if (!events.length) return res.status(404).json({ error: 'Event not found.' });
+        await pool.query(`INSERT IGNORE INTO Saved_Events (user_id, event_id) VALUES (?, ?)`, [req.authUser.user_id, eventId]);
+        return res.status(200).json({ success: true, saved: true, event_id: eventId });
+    } catch (error) {
+        console.error('Error saving event:', error);
+        return res.status(500).json({ error: 'Could not save this event.' });
+    }
+});
+
+app.get('/api/user/saved-events', authenticateUser, async (req, res) => {
+    try {
+        const [rows] = await pool.query(
+            `SELECT event_id FROM Saved_Events WHERE user_id = ? ORDER BY created_at DESC`,
+            [req.authUser.user_id]
+        );
+        return res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error loading saved event IDs:', error);
+        return res.status(500).json({ error: 'Could not load saved events.' });
+    }
+});
+
+app.delete('/api/user/saved-events/:eventId', authenticateUser, async (req, res) => {
+    const eventId = Number(req.params.eventId);
+    if (!Number.isSafeInteger(eventId) || eventId < 1) return res.status(400).json({ error: 'Invalid event ID.' });
+    try {
+        await pool.query(`DELETE FROM Saved_Events WHERE user_id = ? AND event_id = ?`, [req.authUser.user_id, eventId]);
+        return res.status(200).json({ success: true, saved: false, event_id: eventId });
+    } catch (error) {
+        console.error('Error removing saved event:', error);
+        return res.status(500).json({ error: 'Could not remove this saved event.' });
+    }
+});
+
+// 2. Fetch a user's purchased tickets (legacy route retained for older clients).
 app.get('/api/user/tickets/:userId', authenticateUser, async (req, res) => {
     try {
         const userId = req.authUser.user_id;

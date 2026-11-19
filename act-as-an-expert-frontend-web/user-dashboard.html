@@ -30,338 +30,80 @@
     <section class="user-dashboard-welcome" aria-labelledby="user-welcome-title">
       <p class="user-dashboard-eyebrow">YOUR TWENDE ACCOUNT</p>
       <h1 id="user-welcome-title">Welcome back, <span id="user-greeting-name">there</span></h1>
-      <p>Your profile and event plans, all in one place.</p>
+      <p>Your tickets, payments and Kisii event plans, all in one place.</p>
     </section>
 
-    <div class="user-dashboard-grid">
-      <section class="user-dashboard-card profile-card" aria-labelledby="profile-card-title">
-        <div class="user-card-heading">
-          <span class="user-card-icon" aria-hidden="true">◎</span>
-          <div><p class="user-dashboard-eyebrow">ACCOUNT DETAILS</p><h2 id="profile-card-title">My Profile</h2></div>
-        </div>
-        <dl class="user-profile-details">
-          <div><dt>FULL NAME</dt><dd id="profile-name">—</dd></div>
-          <div><dt>EMAIL</dt><dd id="profile-email">—</dd></div>
-          <div><dt>PHONE NUMBER</dt><dd id="profile-phone">—</dd></div>
-        </dl>
-      </section>
+    <nav class="user-hub-tabs" role="tablist" aria-label="Attendee dashboard sections">
+      <button class="user-hub-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="user-panel-tickets" data-hub-tab="tickets">My Tickets <b id="tickets-tab-count">0</b></button>
+      <button class="user-hub-tab" type="button" role="tab" aria-selected="false" aria-controls="user-panel-payments" data-hub-tab="payments">Payment History <b id="orders-tab-count">0</b></button>
+      <button class="user-hub-tab" type="button" role="tab" aria-selected="false" aria-controls="user-panel-saved" data-hub-tab="saved">Saved Events <b id="saved-tab-count">0</b></button>
+      <button class="user-hub-tab" type="button" role="tab" aria-selected="false" aria-controls="user-panel-profile" data-hub-tab="profile">Profile Settings</button>
+    </nav>
 
-      <section class="user-dashboard-card tickets-card" aria-labelledby="tickets-card-title">
-        <div class="user-card-heading">
-          <span class="user-card-icon" aria-hidden="true">▤</span>
-          <div><p class="user-dashboard-eyebrow">YOUR PLANS</p><h2 id="tickets-card-title">My Tickets</h2></div>
-        </div>
-        <div class="user-ticket-list" id="user-ticket-list" aria-live="polite"></div>
-        <div class="user-tickets-empty">
-          <span class="user-empty-ticket" aria-hidden="true">▱</span>
-          <h3>You haven't purchased any tickets yet.</h3>
-          <p>Find your next great night out and your tickets will appear here.</p>
-          <a class="user-discover-button" href="index.html">Discover Events <span aria-hidden="true">→</span></a>
-        </div>
-      </section>
-    </div>
-
-    <section class="user-dashboard-card host-event-card" aria-labelledby="host-event-title">
-      <div class="user-card-heading">
-        <span class="user-card-icon" aria-hidden="true">＋</span>
-        <div><p class="user-dashboard-eyebrow">FOR EVENT ORGANIZERS</p><h2 id="host-event-title">Host an Event</h2></div>
+    <section class="user-hub-panel" id="user-panel-tickets" role="tabpanel" data-hub-panel="tickets" aria-labelledby="tickets-tab-title">
+      <div class="user-hub-panel-heading"><div><p class="user-dashboard-eyebrow">GATE READY</p><h2 id="tickets-tab-title">My Tickets</h2></div><span class="hub-panel-note">Keep your QR ticket ready at the gate.</span></div>
+      <div class="ticket-filter-pills" role="group" aria-label="Filter tickets">
+        <button type="button" class="ticket-filter-pill is-active" data-ticket-filter="upcoming" aria-pressed="true">Upcoming &amp; Valid</button>
+        <button type="button" class="ticket-filter-pill" data-ticket-filter="past" aria-pressed="false">Past / Used</button>
       </div>
-      <p class="host-event-intro">Share your event with the Kisii community. Our team will review your submission before it is published.</p>
-      <form id="host-event-form" class="host-event-form" enctype="multipart/form-data">
-        <div class="form-field"><label for="host-event-title-input">EVENT TITLE</label><input id="host-event-title-input" name="title" type="text" placeholder="e.g. Kisii Live Music Night" required></div>
-        <div class="form-field"><label for="host-event-category">CATEGORY</label><select id="host-event-category" name="category" required><option value="" disabled selected>Choose a category</option><option value="Concert">Concert</option><option value="Campus">Campus</option><option value="Comedy">Comedy</option><option value="Brunch & more">Brunch &amp; more</option></select></div>
-        <div class="form-field"><label for="host-event-venue">VENUE</label><input id="host-event-venue" name="venue" type="text" placeholder="Event venue" required></div>
-        <div class="form-field"><label for="host-event-start">START TIME</label><input id="host-event-start" name="start_time" type="datetime-local" required></div>
-        <div class="form-field host-event-description"><label for="host-event-description">DESCRIPTION</label><textarea id="host-event-description" name="description" rows="5" placeholder="Tell us what guests can expect" required></textarea></div>
-        <div class="form-field host-event-poster"><label for="host-event-poster">EVENT POSTER</label><input id="host-event-poster" name="poster" type="file" accept="image/*"></div>
-        <p class="host-event-status" id="host-event-status" aria-live="polite" role="status"></p>
-        <button class="host-event-submit" type="submit">Submit for Approval <span aria-hidden="true">→</span></button>
+      <div class="user-ticket-list" id="user-ticket-list" aria-live="polite"></div>
+      <div class="user-tickets-empty" id="user-tickets-empty" hidden>
+        <span class="user-empty-ticket" aria-hidden="true">▱</span><h3 id="user-ticket-empty-title">No tickets yet.</h3>
+        <p id="user-ticket-empty-copy">Find your next great night out and your tickets will appear here.</p>
+        <a class="user-discover-button" href="discover.html">Discover Events <span aria-hidden="true">→</span></a>
+      </div>
+    </section>
+
+    <section class="user-hub-panel" id="user-panel-payments" role="tabpanel" data-hub-panel="payments" aria-labelledby="payments-tab-title" hidden>
+      <div class="user-hub-panel-heading"><div><p class="user-dashboard-eyebrow">M-PESA RECEIPTS</p><h2 id="payments-tab-title">Payment History</h2></div><span class="hub-panel-note">Your checkout orders and payment references.</span></div>
+      <div class="hub-table-wrap"><table class="hub-table"><thead><tr><th>Order #</th><th>Event &amp; Tier</th><th>Qty</th><th>Amount (KES)</th><th>M-Pesa Receipt</th><th>Date</th><th>Status</th><th>Action</th></tr></thead><tbody id="user-orders-list"><tr><td colspan="8" class="hub-empty-cell">Loading your orders…</td></tr></tbody></table></div>
+      <div class="user-orders-mobile" id="user-orders-mobile"></div>
+    </section>
+
+    <section class="user-hub-panel" id="user-panel-saved" role="tabpanel" data-hub-panel="saved" aria-labelledby="saved-tab-title" hidden>
+      <div class="user-hub-panel-heading"><div><p class="user-dashboard-eyebrow">YOUR WISHLIST</p><h2 id="saved-tab-title">Saved Events</h2></div><a class="user-discover-button saved-discover-link" href="discover.html">Discover events <span aria-hidden="true">→</span></a></div>
+      <div class="saved-events-grid" id="user-saved-events" aria-live="polite"></div>
+      <div class="user-tickets-empty" id="saved-events-empty" hidden><span class="user-empty-ticket" aria-hidden="true">♡</span><h3>No saved events yet.</h3><p>Tap the bookmark on an event to keep it here for later.</p><a class="user-discover-button" href="discover.html">Browse events <span aria-hidden="true">→</span></a></div>
+    </section>
+
+    <section class="user-hub-panel" id="user-panel-profile" role="tabpanel" data-hub-panel="profile" aria-labelledby="profile-tab-title" hidden>
+      <div class="user-hub-panel-heading"><div><p class="user-dashboard-eyebrow">ACCOUNT DETAILS</p><h2 id="profile-tab-title">Profile Settings</h2></div></div>
+      <form id="user-profile-form" class="user-profile-form">
+        <div class="form-field"><label for="profile-full-name">FULL NAME</label><input id="profile-full-name" name="full_name" type="text" autocomplete="name" required></div>
+        <div class="form-field"><label for="profile-email-input">EMAIL ADDRESS</label><input id="profile-email-input" name="email" type="email" readonly aria-readonly="true"></div>
+        <div class="form-field"><label for="profile-phone-input">DEFAULT M-PESA PHONE NUMBER</label><input id="profile-phone-input" name="phone_number" type="tel" autocomplete="tel" placeholder="07XXXXXXXX or 01XXXXXXXX" required></div>
+        <p class="profile-form-status" id="profile-form-status" role="status" aria-live="polite"></p>
+        <button class="hub-primary-button" type="submit">Save Profile</button>
       </form>
+
+      <section class="host-event-card" aria-labelledby="host-event-title">
+        <div class="user-card-heading"><span class="user-card-icon" aria-hidden="true">＋</span><div><p class="user-dashboard-eyebrow">FOR EVENT ORGANIZERS</p><h2 id="host-event-title">Host an Event</h2></div></div>
+        <p class="host-event-intro">Share your event with the Kisii community. Our team will review your submission before it is published.</p>
+        <form id="host-event-form" class="host-event-form" enctype="multipart/form-data">
+          <div class="form-field"><label for="host-event-title-input">EVENT TITLE</label><input id="host-event-title-input" name="title" type="text" placeholder="e.g. Kisii Live Music Night" required></div>
+          <div class="form-field"><label for="host-event-category">CATEGORY</label><select id="host-event-category" name="category" required><option value="" disabled selected>Choose a category</option><option value="Concert">Concert</option><option value="Campus">Campus</option><option value="Comedy">Comedy</option><option value="Brunch & more">Brunch &amp; more</option></select></div>
+          <div class="form-field"><label for="host-event-venue">VENUE</label><input id="host-event-venue" name="venue" type="text" placeholder="Event venue" required></div>
+          <div class="form-field"><label for="host-event-start">START TIME</label><input id="host-event-start" name="start_time" type="datetime-local" required></div>
+          <div class="form-field host-event-description"><label for="host-event-description">DESCRIPTION</label><textarea id="host-event-description" name="description" rows="5" placeholder="Tell us what guests can expect" required></textarea></div>
+          <div class="form-field host-event-poster"><label for="host-event-poster">EVENT POSTER</label><input id="host-event-poster" name="poster" type="file" accept="image/*"></div>
+          <p class="host-event-status" id="host-event-status" aria-live="polite" role="status"></p>
+          <button class="host-event-submit" type="submit">Submit for Approval <span aria-hidden="true">→</span></button>
+        </form>
+      </section>
     </section>
   </main>
 
-  <script>
-    document.addEventListener('DOMContentLoaded', () => {
-      let user;
-      try {
-        user = JSON.parse(localStorage.getItem('user'));
-      } catch (error) {
-        user = null;
-      }
+  <div class="gate-mode-modal" id="gate-mode-modal" role="dialog" aria-modal="true" aria-labelledby="gate-event-title" hidden>
+    <button class="gate-mode-close" id="gate-mode-close" type="button" aria-label="Close gate ticket">&times;</button>
+    <div class="gate-mode-content">
+      <p class="user-dashboard-eyebrow">PRESENT THIS QR AT THE GATE</p><div class="gate-mode-qr" id="gate-mode-qr"></div>
+      <h1 id="gate-event-title">Event</h1><p class="gate-mode-attendee" id="gate-attendee-name">Attendee</p>
+      <span class="gate-mode-tier" id="gate-ticket-tier">General</span><p class="gate-mode-date" id="gate-event-date"></p>
+      <code class="gate-mode-code" id="gate-ticket-code"></code>
+      <button class="gate-mode-close-cta" id="gate-mode-close-cta" type="button">Close Gate View</button>
+    </div>
+  </div>
 
-      if (!user || !user.token) {
-        window.location.replace('login.html?redirect=user-dashboard.html');
-        return;
-      }
 
-      const fullName = user.full_name || user.name || user.username || 'there';
-      document.querySelector('#user-greeting-name').textContent = fullName;
-      document.querySelector('#profile-name').textContent = fullName;
-      document.querySelector('#profile-email').textContent = user.email || 'Not provided';
-      document.querySelector('#profile-phone').textContent = user.phone_number || user.phone || 'Not provided';
-
-      const ticketList = document.querySelector('#user-ticket-list');
-      const emptyState = document.querySelector('.user-tickets-empty');
-      const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-      })[character]);
-      const jsString = (value) => JSON.stringify(String(value)).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
-      const formatTicketDate = (value) => {
-        if (!value) return 'Date to be announced';
-        const raw = String(value);
-        const parsed = new Date(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?$/.test(raw) ? raw.replace(' ', 'T') : raw);
-        if (Number.isNaN(parsed.getTime())) return escapeHtml(value);
-        return new Intl.DateTimeFormat('en-KE', {
-          weekday: 'long', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit'
-        }).format(parsed);
-      };
-      const resolveTicketPoster = (value) => {
-        const raw = String(value || '').trim();
-        return apiAssetUrl(raw);
-      };
-
-      const shortenQrField = (value, maxLength) => String(value ?? '').replace(/[\r\n|]/g, ' ').trim().slice(0, maxLength);
-      const createTicketQrPayload = ({ title, attendee, tier, venue, date, status, code }, compact = false) => {
-        if (compact) return `TWENDE TICKET | ${shortenQrField(title, 34)} | ${shortenQrField(attendee, 24)} | ${shortenQrField(tier, 14)} | Code: ${code}`.slice(0, 220);
-        return [
-          'TWENDE TICKET', `Event: ${shortenQrField(title, 24)}`, `Holder: ${shortenQrField(attendee, 16)}`,
-          `Tier: ${shortenQrField(tier, 10)}`, `Venue: ${shortenQrField(venue, 16)}`,
-          `Date: ${shortenQrField(date, 16)}`, `Status: ${shortenQrField(status, 8)}`, `Code: ${code}`
-        ].join(' | ').slice(0, 220);
-      };
-      const qrHasPixels = (canvas) => {
-        if (!canvas || !canvas.width || !canvas.height) return false;
-        try {
-          const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
-          for (let index = 0; index < data.length; index += 4) {
-            if (data[index] < 210 || data[index + 1] < 210 || data[index + 2] < 210) return true;
-          }
-        } catch (_) { return false; }
-        return false;
-      };
-      const waitForQrImage = async (image) => {
-        if (image.complete && image.naturalWidth) {
-          if (typeof image.decode === 'function') await image.decode().catch(() => {});
-          return true;
-        }
-        return new Promise((resolve) => {
-          const timeout = window.setTimeout(() => resolve(false), 5000);
-          image.onload = async () => { window.clearTimeout(timeout); if (typeof image.decode === 'function') await image.decode().catch(() => {}); resolve(Boolean(image.naturalWidth)); };
-          image.onerror = () => { window.clearTimeout(timeout); resolve(false); };
-        });
-      };
-      const renderTicketQr = async (container, primaryPayload, compactPayload) => {
-        if (typeof QRCode !== 'function') return false;
-        for (const payload of [primaryPayload, compactPayload]) {
-          try {
-            container.replaceChildren();
-            new QRCode(container, { text: payload, width: 176, height: 176, correctLevel: QRCode.CorrectLevel.M || QRCode.CorrectLevel.L });
-            const canvas = container.querySelector('canvas');
-            if (canvas && qrHasPixels(canvas)) {
-              canvas.style.display = 'block';
-              const image = container.querySelector('img');
-              if (image) image.style.display = 'none';
-              return true;
-            }
-            const image = container.querySelector('img');
-            if (image && await waitForQrImage(image)) return true;
-          } catch (error) { console.warn('Ticket QR generation failed; retrying with compact payload.', error); }
-        }
-        container.textContent = 'QR unavailable';
-        return false;
-      };
-      fetch(`${API_BASE_URL}/api/user/tickets/${encodeURIComponent(user.user_id)}`, {
-        headers: { Authorization: `Bearer ${user.token}` }
-      })
-        .then((response) => {
-          if (response.status === 401) {
-            localStorage.removeItem('user');
-            window.location.replace('login.html?redirect=user-dashboard.html');
-          }
-          if (!response.ok) throw new Error(`Ticket request failed (${response.status})`);
-          return response.json();
-        })
-        .then((tickets) => {
-          if (!Array.isArray(tickets) || tickets.length === 0) return;
-
-          emptyState.hidden = true;
-          ticketList.innerHTML = tickets.map((ticket, index) => {
-            const ticketCode = String(ticket.ticket_code || `TICKET-${index + 1}`);
-            const qrId = `qr-${ticketCode}`;
-            const title = ticket.title || ticket.event_title || ticket.event?.title || 'Event ticket';
-            const ticketCardId = `ticket-card-${ticketCode}`;
-            const downloadHandler = escapeHtml(`downloadTicket(${jsString(ticketCardId)}, ${jsString(title)})`);
-            const venue = ticket.venue || ticket.event_venue || ticket.event?.venue || 'Venue to be announced';
-            const attendee = ticket.attendee_name || fullName;
-            const tier = ticket.tier_name || 'Not recorded for this ticket';
-            const ticketDate = formatTicketDate(ticket.start_time || ticket.event?.start_time);
-            const status = ticket.status || 'valid';
-            const poster = resolveTicketPoster(ticket.poster_url || ticket.event?.poster_url);
-            return `<div class="user-digital-ticket" id="${escapeHtml(ticketCardId)}">
-              <div class="user-digital-ticket-main">
-                <div class="user-ticket-poster-wrap">${poster ? `<img class="user-ticket-poster" crossorigin="anonymous" src="${escapeHtml(poster)}" alt="${escapeHtml(title)} poster" loading="lazy">` : ''}<span class="user-ticket-poster-fallback" ${poster ? 'hidden' : ''}>TWENDE<br>EVENT</span></div>
-                <div class="user-ticket-info">
-                  <span class="user-ticket-label">TWENDE EVENT TICKET</span>
-                  <h3>${escapeHtml(title)}</h3>
-                  <p class="user-ticket-venue">⌖ ${escapeHtml(venue)}</p>
-                  <p class="user-ticket-date">${escapeHtml(ticketDate)}</p>
-                  <dl class="user-ticket-summary">
-                    <div><dt>ATTENDEE</dt><dd>${escapeHtml(attendee)}</dd></div>
-                    <div><dt>TICKET TIER</dt><dd>${escapeHtml(tier)}</dd></div>
-                    <div><dt>STATUS</dt><dd>${escapeHtml(status)}</dd></div>
-                  </dl>
-                  <span class="user-ticket-code">${escapeHtml(ticketCode)}</span>
-                </div>
-              </div>
-              <div class="user-ticket-qr-panel"><div id="${escapeHtml(qrId)}" class="user-ticket-qr"></div><small>SCAN AT THE GATE</small></div>
-              <button class="user-ticket-download" type="button" data-html2canvas-ignore="true" onclick="${downloadHandler}">Download Ticket</button>
-            </div>`;
-          }).join('');
-
-          tickets.forEach((ticket, index) => {
-            const ticketCode = String(ticket.ticket_code || `TICKET-${index + 1}`);
-            const qrTarget = document.getElementById(`qr-${ticketCode}`);
-            if (!qrTarget) return;
-            const ticketTitle = ticket.title || ticket.event_title || ticket.event?.title || 'Event ticket';
-            const ticketAttendee = ticket.attendee_name || fullName;
-            const ticketTier = ticket.tier_name || 'Not recorded for this ticket';
-            const ticketVenue = ticket.venue || ticket.event_venue || ticket.event?.venue || 'Venue to be announced';
-            const ticketDate = formatTicketDate(ticket.start_time || ticket.event?.start_time);
-            const ticketStatus = ticket.status || 'valid';
-            const qrPayloadData = { title: ticketTitle, attendee: ticketAttendee, tier: ticketTier, venue: ticketVenue, date: ticketDate, status: ticketStatus.toUpperCase(), code: ticketCode };
-            const qrPayload = createTicketQrPayload(qrPayloadData);
-            const compactQrPayload = createTicketQrPayload(qrPayloadData, true);
-            qrTarget.dataset.qrPayload = qrPayload;
-            qrTarget.dataset.qrFallback = compactQrPayload;
-            renderTicketQr(qrTarget, qrPayload, compactQrPayload).then((rendered) => {
-              if (!rendered) {
-                qrTarget.setAttribute('role', 'img');
-                qrTarget.setAttribute('aria-label', `Ticket code ${ticketCode}`);
-              }
-            });
-            if (typeof QRCode !== 'function') {
-              qrTarget.textContent = 'QR unavailable';
-              qrTarget.setAttribute('role', 'img');
-              qrTarget.setAttribute('aria-label', `Ticket code ${ticketCode}`);
-            }
-          });
-        })
-        .catch((error) => console.error('Unable to load user tickets:', error));
-
-      window.downloadTicket = async (cardId, eventTitle) => {
-        const ticketCard = document.getElementById(cardId);
-        if (!ticketCard || typeof html2canvas !== 'function') {
-          window.alert('Ticket download is unavailable right now. Please try again.');
-          return;
-        }
-        try {
-          // Wait for qrcodejs output and retry with a compact payload if the current QR is blank.
-          const qrContainer = ticketCard.querySelector('.user-ticket-qr');
-          if (qrContainer) {
-            const currentCanvas = qrContainer.querySelector('canvas');
-            const currentImage = qrContainer.querySelector('img');
-            let qrReady = currentCanvas ? qrHasPixels(currentCanvas) : currentImage ? await waitForQrImage(currentImage) : false;
-            if (!qrReady) {
-              qrReady = await renderTicketQr(qrContainer, qrContainer.dataset.qrPayload || '', qrContainer.dataset.qrFallback || 'TWENDE TICKET');
-            }
-            if (qrReady) {
-              const generatedImage = qrContainer.querySelector('img');
-              if (generatedImage) await waitForQrImage(generatedImage);
-              const generatedCanvas = qrContainer.querySelector('canvas');
-              if (generatedCanvas) generatedCanvas.style.display = 'block';
-              if (generatedImage && generatedCanvas) generatedImage.style.display = 'none';
-            }
-          }
-          const posterImages = [...ticketCard.querySelectorAll('.user-ticket-poster')];
-          await Promise.all(posterImages.map((image) => new Promise((resolve) => {
-            image.crossOrigin = 'anonymous';
-            image.loading = 'eager';
-            let settled = false;
-            let timeoutId;
-            const finish = (useFallback = false) => {
-              if (settled) return;
-              settled = true;
-              window.clearTimeout(timeoutId);
-              image.removeEventListener('load', onLoad);
-              image.removeEventListener('error', onError);
-              if (useFallback) {
-                image.hidden = true;
-                const fallback = image.parentElement?.querySelector('.user-ticket-poster-fallback');
-                if (fallback) fallback.hidden = false;
-              }
-              resolve();
-            };
-            const onLoad = () => finish();
-            const onError = () => finish(true);
-            if (image.complete) {
-              finish(!image.naturalWidth);
-              return;
-            }
-            image.addEventListener('load', onLoad);
-            image.addEventListener('error', onError);
-            timeoutId = window.setTimeout(onError, 10000);
-          })));
-          const canvas = await html2canvas(ticketCard, { scale: 2, useCORS: true, backgroundColor: '#fffdfc' });
-          const imageData = canvas.toDataURL('image/jpeg', 0.95);
-          const safeTitle = String(eventTitle || 'Twende_Event').trim().replace(/\s+/g, '_').replace(/[<>:"/\\|?*\x00-\x1F]/g, '') || 'Twende_Event';
-          const downloadLink = document.createElement('a');
-          downloadLink.href = imageData;
-          downloadLink.download = `${safeTitle}_Ticket.jpg`;
-          document.body.appendChild(downloadLink);
-          downloadLink.click();
-          downloadLink.remove();
-        } catch (error) {
-          console.error('Could not create ticket image:', error);
-          window.alert('Could not download this ticket image. Please try again.');
-        }
-      };
-
-      const hostEventForm = document.querySelector('#host-event-form');
-      const hostEventStatus = document.querySelector('#host-event-status');
-      const hostEventSubmit = hostEventForm?.querySelector('button[type="submit"]');
-      hostEventForm?.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        if (!hostEventForm.reportValidity()) return;
-
-        const loggedInUser = JSON.parse(localStorage.getItem('user'));
-        const organizerId = loggedInUser?.user_id ?? loggedInUser?.id;
-        if (!organizerId) {
-          hostEventStatus.textContent = 'Your account ID could not be found. Please sign in again.';
-          hostEventStatus.className = 'host-event-status is-error';
-          return;
-        }
-
-        const formData = new FormData(hostEventForm);
-        formData.set('organizer_id', String(organizerId));
-        hostEventSubmit.disabled = true;
-        hostEventSubmit.setAttribute('aria-busy', 'true');
-        hostEventStatus.textContent = 'Submitting your event for review…';
-        hostEventStatus.className = 'host-event-status';
-        try {
-          const response = await fetch(API_BASE_URL + '/api/events/create', {
-            method: 'POST',
-            body: formData
-          });
-          const responseData = await response.json().catch(() => ({}));
-          if (!response.ok) throw new Error(responseData.message || responseData.error || 'Event submission failed. Please try again.');
-          hostEventForm.reset();
-          hostEventStatus.textContent = 'Your event has been submitted and is pending admin approval!';
-          hostEventStatus.className = 'host-event-status is-success';
-        } catch (error) {
-          console.error('Could not submit event:', error);
-          hostEventStatus.textContent = error.message || 'Could not submit your event. Please try again.';
-          hostEventStatus.className = 'host-event-status is-error';
-        } finally {
-          hostEventSubmit.disabled = false;
-          hostEventSubmit.removeAttribute('aria-busy');
-        }
-      });
-
-      document.querySelector('#user-logout').addEventListener('click', () => {
-        localStorage.removeItem('user');
-        window.location.href = 'login.html';
-      });
-    });
-  </script>
 </body>
 </html>

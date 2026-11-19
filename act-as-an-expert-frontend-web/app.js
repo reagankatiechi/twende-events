@@ -36,6 +36,7 @@ function syncNavbarAuthState() {
     link.setAttribute('aria-label', `${fullName} account`);
   };
 
+  document.querySelectorAll('[data-nav-avatar]').forEach((link) => applyAvatar(link, link.classList.contains('mobile-account-link')));
   document.querySelectorAll('.btn-signin').forEach((link) => applyAvatar(link));
   document.querySelectorAll('.mobile-signin').forEach((link) => applyAvatar(link, true));
 
@@ -58,6 +59,14 @@ if (document.readyState === 'loading') {
   syncNavbarAuthState();
 }
 window.addEventListener('pageshow', syncNavbarAuthState);
+
+function getTwendeSession() {
+  try {
+    const user = JSON.parse(localStorage.getItem('user') || 'null');
+    const token = user?.token || localStorage.getItem('token');
+    return user && token ? { ...user, token } : null;
+  } catch (_) { return null; }
+}
 
 // Shared account routing guards, admin passcode gate, and "My tickets" navigation.
 (() => {
@@ -400,7 +409,7 @@ if (discoverSearch) {
       const matchesQuery = !query || card.textContent.toLowerCase().includes(query);
       const matchesCategory = !category || card.dataset.category === category;
       const show = matchesQuery && matchesCategory;
-      card.hidden = !show;
+      (card.closest('.discover-card-wrap') || card).hidden = !show;
       if (show) visibleCount += 1;
     });
     searchFeedback.textContent = visibleCount
@@ -698,7 +707,10 @@ async function loadEvents() {
     const price = priceSource == null || priceSource === ''
       ? 'Price TBA'
       : Number.isFinite(priceValue) ? `KES ${priceValue.toLocaleString('en-KE')}` : 'Price TBA';
-    return `<a class="discover-event-card" href="${escapeHtml(detailHref)}" data-category="${slug}"><div class="discover-event-image">${imageMarkup}<span class="discover-date-badge"><b>${escapeHtml(when.badgeDay)}</b><small>${escapeHtml(when.badgeMonth)}</small></span></div><div class="discover-event-body"><span class="event-type">${categoryLabel}</span><h3>${title}</h3><p class="discover-event-datetime">${escapeHtml(when.readable)}</p><p>⌖ ${venue}</p><span class="discover-price">from <b>${escapeHtml(price)}</b></span></div></a>`;
+    const saveButton = getTwendeSession() && eventId != null
+      ? `<button class="event-save-button" type="button" data-save-event="${escapeHtml(eventId)}" aria-label="Save ${title}" aria-pressed="false" title="Save event">♡</button>`
+      : '';
+    return `<article class="discover-card-wrap">${saveButton}<a class="discover-event-card" href="${escapeHtml(detailHref)}" data-category="${slug}"><div class="discover-event-image">${imageMarkup}<span class="discover-date-badge"><b>${escapeHtml(when.badgeDay)}</b><small>${escapeHtml(when.badgeMonth)}</small></span></div><div class="discover-event-body"><span class="event-type">${categoryLabel}</span><h3>${title}</h3><p class="discover-event-datetime">${escapeHtml(when.readable)}</p><p>⌖ ${venue}</p><span class="discover-price">from <b>${escapeHtml(price)}</b></span></div></a></article>`;
   };
 
   const renderCalendarRow = (event, index) => {
@@ -1133,6 +1145,20 @@ async function loadEventDetails() {
     if (mapLabel) mapLabel.textContent = venue;
     const descriptionElement = document.querySelector('#event-description');
     if (descriptionElement) descriptionElement.textContent = description;
+
+    const sessionUser = getTwendeSession();
+    const eventSaveHero = document.querySelector('.detail-hero');
+    if (sessionUser && eventSaveHero && !eventSaveHero.querySelector('[data-save-event]')) {
+      const saveButton = document.createElement('button');
+      saveButton.type = 'button';
+      saveButton.className = 'event-save-button event-save-detail';
+      saveButton.dataset.saveEvent = String(event.event_id ?? event.id ?? eventId);
+      saveButton.setAttribute('aria-pressed', 'false');
+      saveButton.setAttribute('aria-label', `Save ${title}`);
+      saveButton.title = 'Save event';
+      saveButton.textContent = '♡ Save Event';
+      eventSaveHero.appendChild(saveButton);
+    }
 
     let ticketContainer = document.querySelector('#event-ticket-tiers');
     if (!ticketContainer) {
@@ -1944,6 +1970,424 @@ async function deleteUser(userId) {
     } finally {
       submitButton.disabled = false;
       submitButton.removeAttribute('aria-busy');
+    }
+  });
+})();
+
+// Attendee Hub: wallet, gate display, payment history, saved events, and profile.
+(() => {
+  const root = document.querySelector('.user-dashboard-page');
+  if (!root) return;
+
+  let user;
+  try { user = JSON.parse(localStorage.getItem('user') || 'null'); } catch (_) { user = null; }
+  if (!user?.token || !user.user_id) {
+    window.location.replace('login.html?redirect=user-dashboard.html');
+    return;
+  }
+
+  let tickets = [];
+  let orders = [];
+  let savedEvents = [];
+  let ticketFilter = 'upcoming';
+  const ticketList = document.querySelector('#user-ticket-list');
+  const ordersBody = document.querySelector('#user-orders-list');
+  const ordersMobile = document.querySelector('#user-orders-mobile');
+  const savedGrid = document.querySelector('#user-saved-events');
+  const ticketEmpty = document.querySelector('#user-tickets-empty');
+  const savedEmpty = document.querySelector('#saved-events-empty');
+  const gateModal = document.querySelector('#gate-mode-modal');
+  const profileStatus = document.querySelector('#profile-form-status');
+
+  const escapeHub = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[character]);
+  const parseHubDate = (value) => {
+    if (!value) return null;
+    const raw = String(value);
+    const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?$/.test(raw) ? raw.replace(' ', 'T') : raw;
+    const parsed = new Date(normalized);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  };
+  const formatHubDate = (value, opts = {}) => {
+    const date = parseHubDate(value);
+    if (!date) return value ? escapeHub(value) : 'Date to be announced';
+    return new Intl.DateTimeFormat('en-KE', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', ...opts }).format(date);
+  };
+  const formatHubMoney = (value) => Number(value || 0).toLocaleString('en-KE', { maximumFractionDigits: 2 });
+  const getTicketDate = (ticket) => ticket.event_date || ticket.start_time || ticket.event?.start_time || null;
+  const isPastTicket = (ticket) => {
+    const date = parseHubDate(getTicketDate(ticket));
+    return Boolean(date && date.getTime() < Date.now());
+  };
+  const getCountdown = (value) => {
+    const date = parseHubDate(value);
+    if (!date) return 'Date to be announced';
+    const diff = date.getTime() - Date.now();
+    if (diff <= 0) return 'Event Completed';
+    if (date.toDateString() === new Date().toDateString()) return 'Happening Today';
+    const days = Math.floor(diff / 86400000);
+    const hours = Math.floor((diff % 86400000) / 3600000);
+    return days ? `Starts in ${days}d ${hours}h` : `Starts in ${hours}h`;
+  };
+  const resolveHubPoster = (value) => apiAssetUrl(String(value || '').trim());
+  const setToast = (message, kind = 'success') => {
+    if (!profileStatus) return;
+    profileStatus.textContent = message;
+    profileStatus.className = `profile-form-status is-${kind}`;
+    window.clearTimeout(setToast.timer);
+    setToast.timer = window.setTimeout(() => { profileStatus.textContent = ''; profileStatus.className = 'profile-form-status'; }, 4500);
+  };
+
+  const makeQr = (container, ticket, size = 176) => {
+    if (!container || typeof QRCode !== 'function') {
+      if (container) container.textContent = 'QR unavailable';
+      return;
+    }
+    container.replaceChildren();
+    const title = ticket.event_title || ticket.title || 'Twende Event';
+    const attendee = ticket.attendee_name || user.full_name || 'Guest';
+    const tier = ticket.tier_name || 'General';
+    const code = ticket.ticket_code || '';
+    const payload = `TWENDE TICKET | Event: ${title} | Holder: ${attendee} | Tier: ${tier} | Code: ${code}`.replace(/[\r\n|]/g, ' ').slice(0, 220);
+    try { new QRCode(container, { text: payload, width: size, height: size, correctLevel: QRCode.CorrectLevel.M || QRCode.CorrectLevel.L }); }
+    catch (error) { console.error('Unable to render attendee QR code:', error); container.textContent = code; }
+  };
+
+  const getVisibleTickets = () => tickets.filter((ticket) => {
+    const status = String(ticket.ticket_status || ticket.status || 'valid').toLowerCase();
+    return ticketFilter === 'upcoming' ? status === 'valid' && !isPastTicket(ticket) : status === 'used' || isPastTicket(ticket);
+  });
+
+  const renderTickets = () => {
+    const rows = getVisibleTickets();
+    ticketList.replaceChildren();
+    if (!rows.length) {
+      ticketEmpty.hidden = false;
+      document.querySelector('#user-ticket-empty-title').textContent = tickets.length ? 'Nothing in this ticket view.' : 'No tickets yet.';
+      document.querySelector('#user-ticket-empty-copy').textContent = tickets.length
+        ? 'Try the other filter to see your valid, used or completed-event tickets.'
+        : 'Find your next great night out and your tickets will appear here.';
+      return;
+    }
+    ticketEmpty.hidden = true;
+    ticketList.innerHTML = rows.map((ticket) => {
+      const code = String(ticket.ticket_code || 'TICKET');
+      const cardId = `ticket-card-${code}`;
+      const title = ticket.event_title || ticket.title || 'Event ticket';
+      const attendee = ticket.attendee_name || user.full_name || user.name || 'Guest Attendee';
+      const tier = ticket.tier_name || 'General';
+      const venue = ticket.venue || 'Venue to be announced';
+      const location = ticket.location || 'Kisii County';
+      const when = getTicketDate(ticket);
+      const status = String(ticket.ticket_status || ticket.status || 'valid').toLowerCase();
+      const poster = resolveHubPoster(ticket.poster_url);
+      const directions = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${venue} ${location}`)}`;
+      return `<article class="user-digital-ticket hub-digital-ticket" id="${escapeHub(cardId)}" data-ticket-card="${escapeHub(code)}">
+        <div class="user-digital-ticket-main">
+          <div class="user-ticket-poster-wrap">${poster ? `<img class="user-ticket-poster" crossorigin="anonymous" src="${escapeHub(poster)}" alt="${escapeHub(title)} poster" loading="lazy">` : ''}<span class="user-ticket-poster-fallback" ${poster ? 'hidden' : ''}>TWENDE<br>EVENT</span></div>
+          <div class="user-ticket-info"><span class="user-ticket-label">TWENDE EVENT TICKET</span><h3>${escapeHub(title)}</h3>
+            <span class="event-countdown-pill ${status === 'used' || isPastTicket(ticket) ? 'is-complete' : ''}">${escapeHub(getCountdown(when))}</span>
+            <p class="user-ticket-venue">⌖ ${escapeHub(venue)} · ${escapeHub(location)}</p><p class="user-ticket-date">${escapeHub(formatHubDate(when, { hour: 'numeric', minute: '2-digit' }))}</p>
+            <dl class="user-ticket-summary"><div><dt>ATTENDEE</dt><dd>${escapeHub(attendee)}</dd></div><div><dt>TICKET TIER</dt><dd>${escapeHub(tier)}</dd></div><div><dt>STATUS</dt><dd>${escapeHub(status)}</dd></div></dl>
+            <span class="user-ticket-code">${escapeHub(code)}</span>
+          </div>
+        </div>
+        <div class="user-ticket-qr-panel"><div id="qr-${escapeHub(code)}" class="user-ticket-qr"></div><small>SCAN AT THE GATE</small></div>
+        <div class="hub-ticket-actions" data-html2canvas-ignore="true"><button class="hub-gate-button" type="button" data-gate-ticket="${escapeHub(code)}">Show at Gate</button><a class="hub-directions-button" href="${escapeHub(directions)}" target="_blank" rel="noopener noreferrer">Get Directions</a><button class="user-ticket-download" type="button" data-download-ticket="${escapeHub(code)}">Download Ticket</button></div>
+      </article>`;
+    }).join('');
+    rows.forEach((ticket) => makeQr(document.querySelector(`#qr-${CSS.escape(String(ticket.ticket_code || 'TICKET'))}`), ticket));
+  };
+
+  const receiptCanvasDownload = (order) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1100; canvas.height = 680;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#f7f5f2'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.roundRect(45, 45, 1010, 590, 28); ctx.fill();
+    ctx.fillStyle = '#e60000'; ctx.fillRect(45, 45, 12, 590);
+    ctx.fillStyle = '#e60000'; ctx.font = '800 25px Arial'; ctx.fillText('TWENDE EVENTS · PAYMENT RECEIPT', 92, 112);
+    ctx.fillStyle = '#171717'; ctx.font = '700 42px Arial'; ctx.fillText(String(order.event_title || 'Event payment').slice(0, 42), 92, 190);
+    const fields = [
+      ['ORDER', `#${order.order_id}`], ['TICKET TIER', order.tier_name || 'General'], ['QUANTITY', String(order.quantity || 1)],
+      ['AMOUNT PAID', `KES ${formatHubMoney(order.total_amount)}`], ['M-PESA RECEIPT', order.mpesa_receipt_number || 'N/A'],
+      ['PAYMENT DATE', formatHubDate(order.created_at)], ['STATUS', String(order.payment_status || 'paid').toUpperCase()]
+    ];
+    let y = 260;
+    for (const [label, value] of fields) {
+      ctx.fillStyle = '#888'; ctx.font = '700 17px Arial'; ctx.fillText(label, 92, y);
+      ctx.fillStyle = '#202020'; ctx.font = '600 24px Arial'; ctx.fillText(String(value).slice(0, 55), 360, y);
+      y += 49;
+    }
+    ctx.fillStyle = '#777'; ctx.font = '16px Arial'; ctx.fillText('Keep this receipt for your records. Your QR ticket is available in My Tickets.', 92, 588);
+    const link = document.createElement('a');
+    link.download = `Twende_Receipt_${String(order.order_id).replace(/\W/g, '')}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  };
+
+  const renderOrders = () => {
+    const statusClass = (status) => ['paid', 'completed'].includes(String(status).toLowerCase()) ? 'is-paid' : ['pending', 'processing'].includes(String(status).toLowerCase()) ? 'is-pending' : 'is-failed';
+    const statusText = (status) => ['paid', 'completed'].includes(String(status).toLowerCase()) ? 'Paid' : ['pending', 'processing'].includes(String(status).toLowerCase()) ? 'Pending' : 'Failed';
+    if (!orders.length) {
+      ordersBody.innerHTML = '<tr><td colspan="8" class="hub-empty-cell">No M-Pesa orders yet.</td></tr>';
+      ordersMobile.innerHTML = '<p class="hub-empty-card">No M-Pesa orders yet.</p>';
+      return;
+    }
+    const tableRows = orders.map((order) => {
+      const state = statusText(order.payment_status);
+      const action = state === 'Paid'
+        ? `<button class="hub-quiet-button" type="button" data-download-receipt="${escapeHub(order.order_id)}">Download Receipt</button>`
+        : state === 'Pending'
+          ? `<button class="hub-quiet-button" type="button" data-verify-order="${escapeHub(order.external_reference || order.order_id)}">Verify Now</button>` : '—';
+      return `<tr><td>#${escapeHub(order.order_id)}</td><td><strong>${escapeHub(order.event_title || 'Event')}</strong><small>${escapeHub(order.tier_name || 'General')}</small></td><td>${escapeHub(order.quantity || 1)}</td><td>KES ${formatHubMoney(order.total_amount)}</td><td><code class="receipt-code">${escapeHub(order.mpesa_receipt_number || 'N/A')}</code></td><td>${escapeHub(formatHubDate(order.created_at))}</td><td><span class="order-status ${statusClass(order.payment_status)}">${state}</span></td><td>${action}</td></tr>`;
+    }).join('');
+    ordersBody.innerHTML = tableRows;
+    ordersMobile.innerHTML = orders.map((order) => {
+      const state = statusText(order.payment_status);
+      const action = state === 'Paid'
+        ? `<button class="hub-quiet-button" type="button" data-download-receipt="${escapeHub(order.order_id)}">Download Receipt</button>`
+        : state === 'Pending' ? `<button class="hub-quiet-button" type="button" data-verify-order="${escapeHub(order.external_reference || order.order_id)}">Verify Now</button>` : '';
+      return `<article class="payment-order-card"><div><small>ORDER #${escapeHub(order.order_id)}</small><span class="order-status ${statusClass(order.payment_status)}">${state}</span></div><h3>${escapeHub(order.event_title || 'Event')}</h3><p>${escapeHub(order.tier_name || 'General')} · ${escapeHub(order.quantity || 1)} ticket(s)</p><strong>KES ${formatHubMoney(order.total_amount)}</strong><code class="receipt-code">${escapeHub(order.mpesa_receipt_number || 'M-Pesa receipt pending')}</code><small>${escapeHub(formatHubDate(order.created_at))}</small>${action}</article>`;
+    }).join('');
+  };
+
+  const renderSavedEvents = () => {
+    savedGrid.innerHTML = savedEvents.map((event) => {
+      const poster = resolveHubPoster(event.poster_url);
+      const date = formatHubDate(event.event_date, { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+      const image = poster ? `<img src="${escapeHub(poster)}" alt="${escapeHub(event.title)} poster" loading="lazy">` : '<span class="saved-poster-fallback">TWENDE EVENT</span>';
+      return `<article class="saved-event-card"><a class="saved-event-image" href="event-details.html?id=${encodeURIComponent(event.event_id)}">${image}</a><div class="saved-event-content"><span class="user-dashboard-eyebrow">${escapeHub(event.category || 'EVENT')}</span><h3>${escapeHub(event.title || 'Event')}</h3><p>${escapeHub(date)}</p><p>⌖ ${escapeHub(event.venue || 'Venue TBA')}, ${escapeHub(event.location || 'Kisii County')}</p><div><a class="hub-primary-link" href="event-details.html?id=${encodeURIComponent(event.event_id)}">Buy Tickets</a><button type="button" class="hub-remove-saved" data-remove-saved="${escapeHub(event.event_id)}">Remove</button></div></div></article>`;
+    }).join('');
+    savedEmpty.hidden = savedEvents.length > 0;
+    savedGrid.hidden = savedEvents.length === 0;
+  };
+
+  const fillProfile = (profile) => {
+    user = { ...user, ...profile, user_id: profile.id || profile.user_id || user.user_id, token: user.token };
+    document.querySelector('#user-greeting-name').textContent = user.full_name || 'there';
+    document.querySelector('#profile-full-name').value = user.full_name || '';
+    document.querySelector('#profile-email-input').value = user.email || '';
+    document.querySelector('#profile-phone-input').value = user.phone_number || '';
+    localStorage.setItem('user', JSON.stringify(user));
+    syncNavbarAuthState();
+  };
+
+  const updateTabCounts = () => {
+    document.querySelector('#tickets-tab-count').textContent = String(tickets.filter((ticket) => String(ticket.ticket_status || ticket.status).toLowerCase() === 'valid' && !isPastTicket(ticket)).length);
+    document.querySelector('#orders-tab-count').textContent = String(orders.length);
+    document.querySelector('#saved-tab-count').textContent = String(savedEvents.length);
+  };
+
+  async function loadDashboard() {
+    const response = await fetch(`${API_BASE_URL}/api/user/dashboard`, { headers: { Authorization: `Bearer ${user.token}` } });
+    if (response.status === 401) {
+      localStorage.removeItem('user');
+      window.location.replace('login.html?redirect=user-dashboard.html');
+      return;
+    }
+    if (!response.ok) throw new Error(`Dashboard request failed (${response.status})`);
+    const data = await response.json();
+    if (data.user) fillProfile(data.user);
+    tickets = Array.isArray(data.tickets) ? data.tickets : [];
+    orders = Array.isArray(data.orders) ? data.orders : [];
+    savedEvents = Array.isArray(data.savedEvents) ? data.savedEvents : [];
+    renderTickets(); renderOrders(); renderSavedEvents(); updateTabCounts();
+  }
+
+  document.querySelectorAll('[data-hub-tab]').forEach((button) => button.addEventListener('click', () => {
+    const tab = button.dataset.hubTab;
+    document.querySelectorAll('[data-hub-tab]').forEach((item) => {
+      const active = item === button;
+      item.classList.toggle('is-active', active);
+      item.setAttribute('aria-selected', String(active));
+    });
+    document.querySelectorAll('[data-hub-panel]').forEach((panel) => { panel.hidden = panel.dataset.hubPanel !== tab; });
+  }));
+
+  document.querySelectorAll('[data-ticket-filter]').forEach((button) => button.addEventListener('click', () => {
+    ticketFilter = button.dataset.ticketFilter;
+    document.querySelectorAll('[data-ticket-filter]').forEach((pill) => {
+      const active = pill === button;
+      pill.classList.toggle('is-active', active);
+      pill.setAttribute('aria-pressed', String(active));
+    });
+    renderTickets();
+  }));
+
+  const closeGate = () => { gateModal.hidden = true; document.body.classList.remove('gate-mode-open'); };
+  document.querySelector('#gate-mode-close').addEventListener('click', closeGate);
+  document.querySelector('#gate-mode-close-cta').addEventListener('click', closeGate);
+  gateModal.addEventListener('click', (event) => { if (event.target === gateModal) closeGate(); });
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !gateModal.hidden) closeGate(); });
+
+  document.addEventListener('click', async (event) => {
+    const gateButton = event.target.closest('[data-gate-ticket]');
+    if (gateButton) {
+      const ticket = tickets.find((item) => String(item.ticket_code) === gateButton.dataset.gateTicket);
+      if (!ticket) return;
+      document.querySelector('#gate-event-title').textContent = ticket.event_title || 'Twende Event';
+      document.querySelector('#gate-attendee-name').textContent = ticket.attendee_name || user.full_name || 'Guest Attendee';
+      document.querySelector('#gate-ticket-tier').textContent = ticket.tier_name || 'General';
+      document.querySelector('#gate-event-date').textContent = formatHubDate(getTicketDate(ticket), { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+      document.querySelector('#gate-ticket-code').textContent = ticket.ticket_code;
+      makeQr(document.querySelector('#gate-mode-qr'), ticket, 280);
+      gateModal.hidden = false; document.body.classList.add('gate-mode-open'); return;
+    }
+
+    const downloadButton = event.target.closest('[data-download-ticket]');
+    if (downloadButton) {
+      const code = downloadButton.dataset.downloadTicket;
+      const card = document.querySelector(`[data-ticket-card="${CSS.escape(code)}"]`);
+      const ticket = tickets.find((item) => String(item.ticket_code) === code);
+      if (!card || typeof html2canvas !== 'function') return window.alert('Ticket download is not available right now.');
+      try {
+        const canvas = await html2canvas(card, { scale: 2, useCORS: true, backgroundColor: '#fff' });
+        const link = document.createElement('a');
+        link.href = canvas.toDataURL('image/jpeg', .96);
+        link.download = `${String(ticket?.event_title || 'Twende_Event').trim().replace(/\s+/g, '_').replace(/[^\w-]/g, '')}_Ticket.jpg`;
+        link.click();
+      } catch (error) { console.error('Could not download the ticket:', error); window.alert('Could not download this ticket. Please try again.'); }
+      return;
+    }
+
+    const receiptButton = event.target.closest('[data-download-receipt]');
+    if (receiptButton) {
+      const order = orders.find((item) => String(item.order_id) === receiptButton.dataset.downloadReceipt);
+      if (order) receiptCanvasDownload(order);
+      return;
+    }
+
+    const verifyButton = event.target.closest('[data-verify-order]');
+    if (verifyButton) {
+      verifyButton.disabled = true;
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/payments/status/${encodeURIComponent(verifyButton.dataset.verifyOrder)}`, { headers: { Authorization: `Bearer ${user.token}` } });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || 'Could not verify this payment.');
+        await loadDashboard();
+        setToast(data.status === 'paid' || data.payment_status === 'paid' ? 'Payment confirmed. Your ticket is in My Tickets.' : 'Payment is still processing. Check again shortly.', data.status === 'paid' ? 'success' : 'info');
+      } catch (error) { setToast(error.message, 'error'); }
+      finally { verifyButton.disabled = false; }
+      return;
+    }
+
+    const removeSavedButton = event.target.closest('[data-remove-saved]');
+    if (removeSavedButton) {
+      removeSavedButton.disabled = true;
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/user/saved-events/${encodeURIComponent(removeSavedButton.dataset.removeSaved)}`, { method: 'DELETE', headers: { Authorization: `Bearer ${user.token}` } });
+        if (!response.ok) throw new Error('Could not remove the saved event.');
+        await loadDashboard();
+      } catch (error) { window.alert(error.message); removeSavedButton.disabled = false; }
+    }
+  });
+
+  document.querySelector('#user-profile-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    if (!form.reportValidity()) return;
+    const submit = form.querySelector('[type="submit"]');
+    submit.disabled = true;
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/user/profile`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.token}` },
+        body: JSON.stringify({ full_name: form.elements.full_name.value.trim(), phone_number: form.elements.phone_number.value.trim() })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Profile could not be updated.');
+      fillProfile(data.user);
+      setToast('Profile updated successfully.', 'success');
+    } catch (error) { setToast(error.message, 'error'); }
+    finally { submit.disabled = false; }
+  });
+
+  const hostEventForm = document.querySelector('#host-event-form');
+  const hostEventStatus = document.querySelector('#host-event-status');
+  hostEventForm?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!hostEventForm.reportValidity()) return;
+    const submit = hostEventForm.querySelector('[type="submit"]');
+    const formData = new FormData(hostEventForm);
+    formData.set('organizer_id', String(user.user_id));
+    submit.disabled = true;
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/events/create`, { method: 'POST', body: formData });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Could not submit your event.');
+      hostEventForm.reset(); hostEventStatus.textContent = 'Your event has been submitted and is pending admin approval!'; hostEventStatus.className = 'host-event-status is-success';
+    } catch (error) { hostEventStatus.textContent = error.message; hostEventStatus.className = 'host-event-status is-error'; }
+    finally { submit.disabled = false; }
+  });
+
+  document.querySelector('#user-logout').addEventListener('click', () => {
+    localStorage.removeItem('user'); localStorage.removeItem('token'); window.location.href = 'login.html';
+  });
+
+  loadDashboard().catch((error) => {
+    console.error('Unable to load attendee hub:', error);
+    ticketList.innerHTML = '<p class="hub-empty-card is-error">Your dashboard could not be loaded. Please refresh to try again.</p>';
+  });
+})();
+
+// Bookmark controls shared by Discover cards and the Event Details hero.
+(() => {
+  const savedButtons = () => [...document.querySelectorAll('[data-save-event]')];
+  const session = getTwendeSession();
+  if (!session) return;
+  const savedEventIds = new Set();
+
+  const syncSaveButtons = () => savedButtons().forEach((button) => {
+    const saved = savedEventIds.has(String(button.dataset.saveEvent));
+    button.dataset.saved = String(saved);
+    button.classList.toggle('is-saved', saved);
+    button.setAttribute('aria-pressed', String(saved));
+    button.title = saved ? 'Remove saved event' : 'Save event';
+    button.setAttribute('aria-label', saved ? 'Remove saved event' : 'Save event');
+    const label = button.classList.contains('event-save-detail') ? (saved ? '♥ Saved' : '♡ Save Event') : (saved ? '♥' : '♡');
+    if (button.textContent !== label) button.textContent = label;
+  });
+
+  fetch(`${API_BASE_URL}/api/user/saved-events`, { headers: { Authorization: `Bearer ${session.token}` } })
+    .then(async (response) => {
+      if (response.status === 401) throw new Error('Your session expired. Please sign in again to manage saved events.');
+      if (!response.ok) throw new Error('Saved events could not be loaded.');
+      return response.json();
+    })
+    .then((rows) => {
+      if (Array.isArray(rows)) rows.forEach((row) => savedEventIds.add(String(row.event_id)));
+      syncSaveButtons();
+    })
+    .catch((error) => console.error('Unable to load saved event state:', error));
+
+  const observer = new MutationObserver(syncSaveButtons);
+  observer.observe(document.body, { childList: true, subtree: true });
+  syncSaveButtons();
+
+  document.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-save-event]');
+    if (!button) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const eventId = String(button.dataset.saveEvent || '');
+    if (!eventId) return;
+    const wasSaved = savedEventIds.has(eventId);
+    button.disabled = true;
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/user/saved-events/${encodeURIComponent(eventId)}`, {
+        method: wasSaved ? 'DELETE' : 'POST',
+        headers: { Authorization: `Bearer ${session.token}` }
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Could not update your saved events.');
+      if (wasSaved) savedEventIds.delete(eventId); else savedEventIds.add(eventId);
+      syncSaveButtons();
+    } catch (error) {
+      console.error('Unable to update saved event:', error);
+      window.alert(error.message || 'Could not update your saved events.');
+    } finally {
+      button.disabled = false;
     }
   });
 })();
