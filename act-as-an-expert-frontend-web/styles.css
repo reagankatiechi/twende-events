@@ -631,6 +631,13 @@ body.mobile-drawer-open { overflow: hidden; }
 }
 @media (prefers-reduced-motion: reduce) { .mobile-drawer, .mobile-drawer-panel { transition-duration: .01ms; } }
 
+/* Shared signed-in navbar avatar */
+.nav-user-avatar { display: inline-flex; flex: 0 0 42px; width: 42px; height: 42px; align-items: center; justify-content: center; border: 2px solid #fff; border-radius: 50%; background: #e60000; color: #fff !important; box-shadow: 0 0 0 1px #e60000; font-size: 13px; font-weight: 800; letter-spacing: .02em; line-height: 1; text-decoration: none; transition: transform .18s ease, background .18s ease, box-shadow .18s ease; }
+.nav-user-avatar:hover { transform: translateY(-1px); background: #c90000; box-shadow: 0 0 0 1px #c90000, 0 5px 13px #e6000033; }
+.mobile-drawer-links .nav-user-avatar.mobile-account-link { align-self: flex-end; width: 46px; min-height: 46px; height: 46px; margin: 18px 0 0; padding: 0; border: 2px solid #fff; border-radius: 50%; background: #e60000; color: #fff; }
+.mobile-drawer-links .nav-user-avatar.mobile-account-link:hover { padding: 0; background: #c90000; color: #fff; }
+.user-dashboard-nav-avatar { margin-left: auto; }
+
 /* Skeleton Loaders */
 @keyframes shimmer { 100% { background-position: -200% 0; } }
 .discover-skeleton-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }

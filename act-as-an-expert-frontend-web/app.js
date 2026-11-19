@@ -7,6 +7,58 @@ function normalizeKenyanPhoneNumber(value) {
   return /^254[17]\d{8}$/.test(normalized) ? normalized : null;
 }
 
+// Keep the public-site navigation in sync with the saved session on every page.
+function syncNavbarAuthState() {
+  let user = null;
+  try {
+    user = JSON.parse(localStorage.getItem('user') || 'null');
+  } catch (_) {
+    user = null;
+  }
+  const token = user?.token || localStorage.getItem('token');
+  if (!user || !token) return;
+
+  const fullName = String(user.full_name || user.name || user.username || 'Twende User').trim();
+  const words = fullName.split(/\s+/).filter(Boolean);
+  const initials = (words.length > 1
+    ? `${words[0][0]}${words[words.length - 1][0]}`
+    : (words[0] || 'TE').slice(0, 2)).toUpperCase();
+
+  const applyAvatar = (link, mobile = false) => {
+    if (!link) return;
+    link.href = 'user-dashboard.html';
+    link.classList.remove('btn-signin', 'mobile-signin');
+    link.classList.add('nav-user-avatar');
+    if (mobile) link.classList.add('mobile-account-link');
+    link.dataset.navAvatar = '';
+    link.textContent = initials;
+    link.title = fullName;
+    link.setAttribute('aria-label', `${fullName} account`);
+  };
+
+  document.querySelectorAll('.btn-signin').forEach((link) => applyAvatar(link));
+  document.querySelectorAll('.mobile-signin').forEach((link) => applyAvatar(link, true));
+
+  const userDashboardNav = document.querySelector('.user-dashboard-nav');
+  if (userDashboardNav && !userDashboardNav.querySelector('[data-nav-avatar]')) {
+    const avatar = document.createElement('a');
+    avatar.className = 'nav-user-avatar user-dashboard-nav-avatar';
+    avatar.dataset.navAvatar = '';
+    avatar.href = 'user-dashboard.html';
+    avatar.textContent = initials;
+    avatar.title = fullName;
+    avatar.setAttribute('aria-label', `${fullName} account`);
+    userDashboardNav.insertBefore(avatar, userDashboardNav.querySelector('#user-logout'));
+  }
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', syncNavbarAuthState, { once: true });
+} else {
+  syncNavbarAuthState();
+}
+window.addEventListener('pageshow', syncNavbarAuthState);
+
 // Shared account routing guards, admin passcode gate, and "My tickets" navigation.
 (() => {
   const pageName = window.location.pathname.split('/').pop() || 'index.html';
@@ -1178,6 +1230,7 @@ loadEventDetails();
   let pollTimer = null;
   let elapsedSeconds = 0;
   let pollInProgress = false;
+  let successRedirectTimer = null;
 
   const showStep = (step) => {
     [stepOne, stepTwo, stepThree].forEach((item) => item.classList.toggle('hidden', item !== step));
@@ -1239,17 +1292,24 @@ loadEventDetails();
 
   const showPaymentSuccess = (paymentStatus) => {
     stopPolling();
+    if (successRedirectTimer) window.clearTimeout(successRedirectTimer);
     const receipt = paymentStatus.mpesaReceipt || 'Receipt pending';
     document.querySelector('#mpesa-receipt-code').textContent = receipt;
     const count = Array.isArray(paymentStatus.tickets) ? paymentStatus.tickets.length : checkoutContext?.quantity || 1;
     document.querySelector('#mpesa-success-message').textContent = `${count} ticket${count === 1 ? '' : 's'} issued and ready in your My Tickets dashboard.`;
     activePayment = null;
-    if (modal.classList.contains('hidden')) {
-      const feedback = document.querySelector('#checkout-feedback');
-      if (feedback) feedback.textContent = `Payment received · M-Pesa receipt ${receipt}. Your ticket${count === 1 ? ' is' : 's are'} ready in My Tickets.`;
-      return;
+    const viewTicketLink = document.querySelector('.mpesa-view-ticket');
+    if (viewTicketLink) {
+      viewTicketLink.href = 'user-dashboard.html?new_ticket=1';
+      viewTicketLink.innerHTML = 'View &amp; Download My Ticket <span aria-hidden="true">→</span>';
     }
     showStep(stepThree);
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('mpesa-modal-open');
+    successRedirectTimer = window.setTimeout(() => {
+      window.location.href = 'user-dashboard.html?new_ticket=1';
+    }, 1800);
   };
 
   const startPolling = (externalReference) => {
@@ -1280,12 +1340,14 @@ loadEventDetails();
           headers: { Authorization: `Bearer ${activePayment.context.authToken}` }
         });
         const result = await response.json().catch(() => ({}));
-        const paymentState = String(result.status || result.payment_status || '').trim().toLowerCase();
-        if (response.ok && ['paid', 'success', 'completed'].includes(paymentState)) {
+        const paymentStates = [result.status, result.payment_status].map((value) => String(value || '').trim().toLowerCase());
+        const paid = paymentStates.some((state) => ['paid', 'success', 'completed'].includes(state));
+        const failed = paymentStates.some((state) => ['failed', 'cancelled', 'canceled', 'rejected', 'expired'].includes(state));
+        if (response.ok && paid) {
           showPaymentSuccess(result);
           return;
         }
-        if (response.ok && ['failed', 'cancelled', 'canceled', 'rejected', 'expired'].includes(paymentState)) {
+        if (response.ok && failed) {
           showPaymentFailure(result.failureReason || 'The payment was cancelled or declined.');
           return;
         }
@@ -1340,15 +1402,22 @@ loadEventDetails();
     modal.classList.remove('hidden');
     modal.setAttribute('aria-hidden', 'false');
     try {
+      let loggedInUser = null;
+      try { loggedInUser = JSON.parse(localStorage.getItem('user') || 'null'); } catch (_) { /* require a fresh sign-in */ }
+      const authToken = loggedInUser?.token || localStorage.getItem('token') || checkoutContext.authToken;
+      const userId = loggedInUser?.user_id ?? checkoutContext.userId;
+      const email = loggedInUser?.email || checkoutContext.attendeeEmail;
+      if (!authToken || !userId) throw new Error('Please sign in again before starting checkout.');
+      checkoutContext = { ...checkoutContext, authToken, userId: Number(userId), attendeeEmail: email };
       const response = await fetch(`${API_BASE_URL}/api/payments/stk-push`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${checkoutContext.authToken}`
+          Authorization: `Bearer ${authToken}`
         },
         body: JSON.stringify({
-          user_id: checkoutContext.userId,
-          email: checkoutContext.attendeeEmail,
+          user_id: userId,
+          email,
           event_id: checkoutContext.eventId,
           tier_id: checkoutContext.tierId,
           quantity: checkoutContext.quantity,

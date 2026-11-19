@@ -114,7 +114,7 @@ async function ensurePaymentSchema() {
             },
             Purchased_Tickets: {
                 ticket_id: 'BIGINT NOT NULL AUTO_INCREMENT',
-                order_id: 'BIGINT NULL',
+                order_id: 'INT NULL',
                 user_id: 'INT NULL',
                 event_id: 'INT NULL',
                 tier_id: 'INT NULL',
@@ -450,20 +450,26 @@ async function fulfillPaidOrder(orderId, mpesaReceipt = null) {
         const order = orders[0];
         const alreadyPaid = String(order.payment_status).toLowerCase() === 'paid';
         const existingTicketCodes = alreadyPaid ? await getOrderTicketCodes(connection, order.order_id) : [];
+        const [[purchasedCountRow]] = await connection.query(
+            `SELECT COUNT(*) AS ticket_count FROM Purchased_Tickets WHERE order_id = ?`,
+            [order.order_id]
+        );
+        const purchasedTicketCount = Number(purchasedCountRow?.ticket_count || 0);
         const ticketQuantity = Number(order.quantity || 1);
         if (!Number.isSafeInteger(ticketQuantity) || ticketQuantity < 1) {
             throw new Error(`Order ${order.order_id} has an invalid ticket quantity`);
         }
-        if (alreadyPaid && existingTicketCodes.length >= ticketQuantity) {
+        if (alreadyPaid && Math.max(purchasedTicketCount, existingTicketCodes.length) >= ticketQuantity) {
             await connection.commit();
             return { found: true, status: 'paid', mpesaReceipt: order.mpesa_receipt_number || mpesaReceipt || null, tickets: existingTicketCodes };
         }
 
         const [tierRows] = await connection.query(
-            `SELECT tier_id FROM Ticket_Tiers WHERE tier_id = ? AND event_id = ? LIMIT 1 FOR UPDATE`,
-            [order.tier_id, order.event_id]
+            `SELECT tier_id, event_id FROM Ticket_Tiers WHERE tier_id = ? LIMIT 1 FOR UPDATE`,
+            [order.tier_id]
         );
         if (!tierRows.length) throw new Error('The ticket tier for this paid order no longer exists');
+        order.event_id = order.event_id || tierRows[0].event_id;
         if (!alreadyPaid) {
             await connection.query(
                 `UPDATE Ticket_Tiers SET quantity_sold = COALESCE(quantity_sold, 0) + ? WHERE tier_id = ?`,
@@ -485,7 +491,8 @@ async function fulfillPaidOrder(orderId, mpesaReceipt = null) {
             [process.env.DB_NAME || 'defaultdb']
         );
         const ticketCodes = [...existingTicketCodes];
-        const missingTicketCount = Math.max(0, ticketQuantity - existingTicketCodes.length);
+        const existingTicketCount = Math.max(purchasedTicketCount, existingTicketCodes.length);
+        const missingTicketCount = Math.max(0, ticketQuantity - existingTicketCount);
         for (let index = 0; index < missingTicketCount; index += 1) {
             const ticketCode = randomUUID();
             ticketCodes.push(ticketCode);
@@ -1316,26 +1323,26 @@ app.get('/api/user/tickets/:userId', authenticateUser, async (req, res) => {
         const email = req.authUser.email;
         const phoneDigits = lastNinePhoneDigits(accountRows[0]?.phone_number);
         const [tickets] = await pool.query(
-            `SELECT p.ticket_code,
-                    CASE WHEN LOWER(COALESCE(p.status, '')) = 'used' OR COALESCE(t.is_scanned, 0) = 1 THEN 'used' ELSE 'valid' END AS status,
-                    COALESCE(p.purchase_date, o.created_at) AS purchased_at,
-                    COALESCE(NULLIF(p.attendee_name, ''), NULLIF(o.attendee_name, ''), u.full_name) AS attendee_name,
+            `SELECT pt.ticket_code,
+                    CASE WHEN LOWER(COALESCE(pt.status, '')) = 'used' OR COALESCE(t.is_scanned, 0) = 1 THEN 'used' ELSE 'valid' END AS status,
+                    COALESCE(pt.purchase_date, o.created_at) AS purchased_at,
+                    COALESCE(NULLIF(pt.attendee_name, ''), NULLIF(o.attendee_name, ''), u.full_name) AS attendee_name,
                     e.title,
                     e.start_time,
                     e.venue,
                     e.poster_url,
                     tt.tier_name
-             FROM Purchased_Tickets p
-             JOIN Events e ON p.event_id = e.event_id
-             LEFT JOIN Tickets t ON t.ticket_code = p.ticket_code
-             LEFT JOIN Orders o ON o.order_id = COALESCE(t.order_id, p.order_id)
-             LEFT JOIN Users u ON u.user_id = COALESCE(p.user_id, o.user_id)
-             LEFT JOIN Ticket_Tiers tt ON tt.tier_id = COALESCE(t.tier_id, p.tier_id)
-             WHERE p.user_id = ?
+             FROM Purchased_Tickets pt
+             LEFT JOIN Events e ON pt.event_id = e.event_id
+             LEFT JOIN Tickets t ON t.ticket_code = pt.ticket_code
+             LEFT JOIN Orders o ON o.order_id = COALESCE(t.order_id, pt.order_id)
+             LEFT JOIN Users u ON u.user_id = COALESCE(pt.user_id, o.user_id)
+             LEFT JOIN Ticket_Tiers tt ON tt.tier_id = COALESCE(t.tier_id, pt.tier_id)
+             WHERE pt.user_id = ?
                 OR o.user_id = ?
                 OR LOWER(o.attendee_email) = LOWER(?)
                 OR (o.user_id IS NULL AND RIGHT(REPLACE(COALESCE(NULLIF(o.phone_number, ''), o.checkout_phone), '+', ''), 9) = ?)
-             ORDER BY p.purchase_date DESC`,
+             ORDER BY pt.purchase_date DESC, pt.ticket_id DESC`,
             [userId, userId, email, phoneDigits || '__NO_PHONE_MATCH__']
         );
         res.status(200).json(tickets);
