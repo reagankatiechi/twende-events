@@ -1777,6 +1777,274 @@ async function deleteEvent(eventId) {
   else window.addEventListener('twende:admin-unlocked', loadAnalytics, { once: true });
 })();
 
+// Tabbed admin command center: event/tier maintenance and PayHero reconciliation.
+(() => {
+  const root = document.querySelector('.admin-dashboard-page');
+  const tabButtons = [...document.querySelectorAll('[data-admin-tab]')];
+  const tabPanels = [...document.querySelectorAll('[data-admin-panel]')];
+  const eventsBody = document.querySelector('#manage-events-body');
+  const ordersBody = document.querySelector('#admin-orders-body');
+  if (!root || !tabButtons.length || !eventsBody || !ordersBody) return;
+
+  let events = [];
+  let orders = [];
+  let orderFilter = 'all';
+  let selectedTierEventId = null;
+  const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
+  const dateLabel = (value) => {
+    if (!value) return 'Date to be announced';
+    const normalized = String(value).replace(' ', 'T');
+    const parsed = new Date(normalized);
+    return Number.isNaN(parsed.getTime()) ? esc(value) : new Intl.DateTimeFormat('en-KE', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(parsed);
+  };
+  const money = (value) => Number(value || 0).toLocaleString('en-KE', { maximumFractionDigits: 2 });
+  const getJson = async (url, options = {}) => {
+    const response = await window.adminFetch(url, options);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || data.message || `Request failed (${response.status})`);
+    return data;
+  };
+  const setFeedback = (selector, message, kind = '') => {
+    const element = document.querySelector(selector);
+    if (!element) return;
+    element.textContent = message;
+    element.className = `${element.id.includes('feedback') ? 'admin-tab-feedback' : 'admin-modal-feedback'}${kind ? ` is-${kind}` : ''}`;
+  };
+
+  tabButtons.forEach((button) => button.addEventListener('click', () => {
+    const name = button.dataset.adminTab;
+    tabButtons.forEach((tab) => {
+      const active = tab === button;
+      tab.classList.toggle('is-active', active);
+      tab.setAttribute('aria-selected', String(active));
+    });
+    tabPanels.forEach((panel) => { panel.hidden = panel.dataset.adminPanel !== name; });
+    const headings = { analytics: 'Sales & Analytics', events: 'Events & Ticket Tiers', orders: 'M-Pesa Reconciliation', create: 'Create / Approve Events' };
+    const heading = document.querySelector('.admin-top-header h1');
+    if (heading) heading.textContent = headings[name] || 'Admin Command Center';
+    if (name === 'events') loadEvents();
+    if (name === 'orders') loadOrders();
+  }));
+  document.querySelector('.admin-nav-link[href="#recent-events"]')?.addEventListener('click', (event) => {
+    event.preventDefault();
+    document.querySelector('[data-admin-tab="events"]')?.click();
+    window.setTimeout(() => document.querySelector('#recent-events')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  });
+
+  const renderEvents = () => {
+    if (!events.length) {
+      eventsBody.innerHTML = '<tr><td class="admin-table-message" colspan="5">No events are available to manage.</td></tr>';
+      return;
+    }
+    eventsBody.innerHTML = events.map((item) => {
+      const id = item.event_id ?? item.id;
+      const poster = item.poster_url ? apiAssetUrl(item.poster_url) : '';
+      const status = String(item.status || item.approval_status || 'draft').toLowerCase();
+      return `<tr><td><div class="managed-event-cell">${poster ? `<img src="${esc(poster)}" alt="" loading="lazy">` : '<span class="managed-event-placeholder">TE</span>'}<strong>${esc(item.title || 'Untitled event')}</strong></div></td><td>${dateLabel(item.start_time)}</td><td>${esc(item.venue || 'Venue TBA')}${item.location ? `<small>${esc(item.location)}</small>` : ''}</td><td><span class="admin-status-badge admin-status-${esc(status)}">${esc(item.approval_status || status)}</span></td><td><div class="admin-row-actions"><button class="admin-row-button" type="button" data-admin-edit-event="${esc(id)}">Edit Event</button><button class="admin-row-button is-secondary" type="button" data-admin-manage-tiers="${esc(id)}">Manage Tiers</button></div></td></tr>`;
+    }).join('');
+  };
+
+  async function loadEvents() {
+    const feedback = document.querySelector('#manage-events-feedback');
+    feedback.textContent = 'Loading events…';
+    try {
+      const result = await getJson(`${API_BASE_URL}/api/admin/events`);
+      events = Array.isArray(result) ? result : [];
+      renderEvents();
+      feedback.textContent = `${events.length} events available for management.`;
+    } catch (error) {
+      console.error('Unable to load events for admin management:', error);
+      eventsBody.innerHTML = '<tr><td class="admin-table-message is-error" colspan="5">Events could not be loaded.</td></tr>';
+      feedback.textContent = error.message;
+    }
+  }
+  document.querySelector('#manage-events-refresh')?.addEventListener('click', loadEvents);
+
+  const editModal = document.querySelector('#edit-admin-event-modal');
+  const editForm = document.querySelector('#edit-admin-event-form');
+  const tiersModal = document.querySelector('#manage-admin-tiers-modal');
+  const tiersList = document.querySelector('#admin-tiers-list');
+  const closeModals = () => {
+    document.querySelectorAll('.admin-modal-overlay').forEach((modal) => { modal.hidden = true; });
+    document.body.classList.remove('admin-modal-open');
+  };
+  document.querySelectorAll('[data-close-admin-modal]').forEach((button) => button.addEventListener('click', closeModals));
+  document.querySelectorAll('.admin-modal-overlay').forEach((modal) => modal.addEventListener('click', (event) => { if (event.target === modal) closeModals(); }));
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeModals(); });
+
+  eventsBody.addEventListener('click', async (event) => {
+    const editButton = event.target.closest('[data-admin-edit-event]');
+    if (editButton) {
+      const selected = events.find((item) => String(item.event_id ?? item.id) === editButton.dataset.adminEditEvent);
+      if (!selected) return;
+      editForm.elements.event_id.value = selected.event_id ?? selected.id;
+      editForm.elements.title.value = selected.title || '';
+      editForm.elements.start_time.value = String(selected.start_time || '').replace(' ', 'T').slice(0, 16);
+      editForm.elements.venue.value = selected.venue || '';
+      editForm.elements.location.value = selected.location || selected.city || '';
+      editForm.elements.category.value = selected.category || '';
+      editForm.elements.poster_url.value = selected.poster_url || '';
+      editForm.elements.description.value = selected.description || '';
+      editForm.elements.status.value = String(selected.status || 'draft').toLowerCase() === 'published' ? 'published' : 'draft';
+      editModal.hidden = false;
+      document.body.classList.add('admin-modal-open');
+      return;
+    }
+    const tiersButton = event.target.closest('[data-admin-manage-tiers]');
+    if (tiersButton) {
+      const item = events.find((row) => String(row.event_id ?? row.id) === tiersButton.dataset.adminManageTiers);
+      if (!item) return;
+      selectedTierEventId = Number(item.event_id ?? item.id);
+      document.querySelector('#manage-admin-tiers-event').textContent = item.title || 'Event';
+      tiersModal.hidden = false;
+      document.body.classList.add('admin-modal-open');
+      await loadTiers();
+    }
+  });
+
+  editForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!editForm.reportValidity()) return;
+    const button = editForm.querySelector('[type="submit"]');
+    button.disabled = true;
+    setFeedback('#edit-admin-event-feedback', 'Saving event…');
+    const body = {
+      title: editForm.elements.title.value.trim(),
+      start_time: editForm.elements.start_time.value,
+      venue: editForm.elements.venue.value.trim(),
+      location: editForm.elements.location.value.trim(),
+      category: editForm.elements.category.value.trim(),
+      poster_url: editForm.elements.poster_url.value.trim(),
+      description: editForm.elements.description.value.trim(),
+      status: editForm.elements.status.value
+    };
+    try {
+      await getJson(`${API_BASE_URL}/api/admin/events/${encodeURIComponent(editForm.elements.event_id.value)}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+      closeModals(); await loadEvents();
+    } catch (error) { setFeedback('#edit-admin-event-feedback', error.message, 'error'); }
+    finally { button.disabled = false; }
+  });
+
+  async function loadTiers() {
+    if (!selectedTierEventId) return;
+    tiersList.innerHTML = '<p class="admin-table-message">Loading ticket tiers…</p>';
+    try {
+      const rows = await getJson(`${API_BASE_URL}/api/admin/events/${selectedTierEventId}/tiers`);
+      if (!Array.isArray(rows) || !rows.length) {
+        tiersList.innerHTML = '<p class="admin-table-message">No tiers yet. Add the first tier below.</p>';
+        return;
+      }
+      tiersList.innerHTML = rows.map((tier) => `<form class="admin-tier-edit-form" data-admin-tier-form="${esc(tier.tier_id)}"><strong>${esc(tier.tier_name || 'Ticket tier')}</strong><div class="admin-form-two-col"><label>Tier Name<input name="tier_name" value="${esc(tier.tier_name || '')}" required></label><label>Price (KES)<input name="price" type="number" min="0" step="0.01" value="${esc(tier.price)}" required></label></div><div class="admin-form-two-col"><label>Remaining Stock<input name="remaining_quantity" type="number" min="0" step="1" value="${esc(tier.remaining_quantity ?? 0)}" required></label><label>Description<input name="description" value="${esc(tier.description || '')}"></label></div><button class="admin-row-button" type="submit">Save Tier</button></form>`).join('');
+    } catch (error) {
+      console.error('Unable to load event ticket tiers:', error);
+      tiersList.innerHTML = `<p class="admin-table-message is-error">${esc(error.message)}</p>`;
+    }
+  }
+
+  tiersList.addEventListener('submit', async (event) => {
+    const form = event.target.closest('[data-admin-tier-form]');
+    if (!form) return;
+    event.preventDefault();
+    if (!form.reportValidity()) return;
+    const button = form.querySelector('[type="submit"]'); button.disabled = true;
+    const body = Object.fromEntries(new FormData(form).entries());
+    body.price = Number(body.price); body.remaining_quantity = Number(body.remaining_quantity);
+    try { await getJson(`${API_BASE_URL}/api/admin/tiers/${encodeURIComponent(form.dataset.adminTierForm)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); await loadTiers(); }
+    catch (error) { window.alert(error.message); button.disabled = false; }
+  });
+
+  document.querySelector('#add-admin-tier-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    if (!selectedTierEventId || !form.reportValidity()) return;
+    const button = form.querySelector('[type="submit"]'); button.disabled = true;
+    const body = Object.fromEntries(new FormData(form).entries()); body.price = Number(body.price); body.remaining_quantity = Number(body.remaining_quantity);
+    try { await getJson(`${API_BASE_URL}/api/admin/events/${selectedTierEventId}/tiers`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); form.reset(); await loadTiers(); }
+    catch (error) { setFeedback('#tiers-feedback', error.message, 'error'); }
+    finally { button.disabled = false; }
+  });
+
+  const renderOrders = () => {
+    const visible = orderFilter === 'all' ? orders : orders.filter((order) => {
+      const status = String(order.payment_status || '').toLowerCase();
+      return orderFilter === 'paid' ? ['paid', 'completed'].includes(status) : status === orderFilter;
+    });
+    if (!visible.length) {
+      ordersBody.innerHTML = '<tr><td class="admin-table-message" colspan="8">No orders match this filter.</td></tr>';
+      return;
+    }
+    ordersBody.innerHTML = visible.map((order) => {
+      const state = String(order.payment_status || 'pending').toLowerCase();
+      const paid = ['paid', 'completed'].includes(state);
+      const statusClass = paid ? 'is-paid' : state === 'pending' ? 'is-pending' : 'is-failed';
+      const actions = paid ? '<span class="admin-order-complete">Tickets issued</span>' : `<button class="admin-row-button" type="button" data-check-payhero="${esc(order.order_id)}">Check PayHero</button><button class="admin-row-button is-warning" type="button" data-manual-issue="${esc(order.order_id)}">Manual Issue</button>`;
+      return `<tr><td>#${esc(order.order_id)}</td><td><strong>${esc(order.attendee_name || 'Guest')}</strong><small>${esc(order.phone_number || 'N/A')}</small></td><td><strong>${esc(order.event_title || 'Event unavailable')}</strong><small>${esc(order.tier_name || 'General')}</small></td><td>KES ${money(order.total_amount)}</td><td><code>${esc(order.mpesa_receipt_number || '—')}</code>${order.failure_reason ? `<small>${esc(order.failure_reason)}</small>` : ''}</td><td><span class="admin-order-status ${statusClass}">${esc(state)}</span></td><td>${dateLabel(order.created_at)}</td><td><div class="admin-row-actions">${actions}</div></td></tr>`;
+    }).join('');
+  };
+  async function loadOrders() {
+    document.querySelector('#reconciliation-feedback').textContent = 'Loading recent orders…';
+    try {
+      const data = await getJson(`${API_BASE_URL}/api/admin/orders`);
+      orders = Array.isArray(data) ? data : [];
+      renderOrders();
+      document.querySelector('#reconciliation-feedback').textContent = `${orders.length} most recent orders loaded.`;
+    } catch (error) {
+      console.error('Unable to load admin orders:', error);
+      ordersBody.innerHTML = `<tr><td class="admin-table-message is-error" colspan="8">${esc(error.message)}</td></tr>`;
+      document.querySelector('#reconciliation-feedback').textContent = 'Orders could not be loaded.';
+    }
+  }
+  document.querySelectorAll('[data-order-status]').forEach((button) => button.addEventListener('click', () => {
+    orderFilter = button.dataset.orderStatus;
+    document.querySelectorAll('[data-order-status]').forEach((pill) => { const active = pill === button; pill.classList.toggle('is-active', active); pill.setAttribute('aria-pressed', String(active)); });
+    renderOrders();
+  }));
+  document.querySelector('#reconcile-all-orders').addEventListener('click', async (event) => {
+    const button = event.currentTarget; button.disabled = true;
+    const feedback = document.querySelector('#reconciliation-feedback'); feedback.textContent = 'Checking pending orders with PayHero…';
+    try {
+      const result = await getJson(`${API_BASE_URL}/api/admin/orders/reconcile-all`, { method: 'POST' });
+      feedback.textContent = `Checked ${Number(result.checked || 0)} pending orders — ${Number(result.reconciled || 0)} reconciled and tickets issued!`;
+      await loadOrders();
+    } catch (error) { feedback.textContent = error.message; }
+    finally { button.disabled = false; }
+  });
+  ordersBody.addEventListener('click', async (event) => {
+    const checkButton = event.target.closest('[data-check-payhero]');
+    const manualButton = event.target.closest('[data-manual-issue]');
+    const orderId = checkButton?.dataset.checkPayhero || manualButton?.dataset.manualIssue;
+    if (!orderId) return;
+    if (manualButton) {
+      const receipt = window.prompt('Enter the M-Pesa SMS receipt code:');
+      if (!receipt || !receipt.trim()) return;
+      manualButton.disabled = true;
+      try {
+        const result = await getJson(`${API_BASE_URL}/api/admin/orders/${encodeURIComponent(orderId)}/manual-fulfill`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mpesaReceipt: receipt.trim() }) });
+        window.alert(`Tickets issued successfully. Receipt: ${result.mpesaReceipt || receipt.trim().toUpperCase()}`);
+        await loadOrders();
+      } catch (error) { window.alert(error.message); manualButton.disabled = false; }
+      return;
+    }
+    checkButton.disabled = true;
+    try {
+      const result = await getJson(`${API_BASE_URL}/api/admin/orders/${encodeURIComponent(orderId)}/reconcile`, { method: 'POST' });
+      window.alert(result.status === 'paid' ? `Payment confirmed. Receipt: ${result.mpesaReceipt || 'N/A'}` : `PayHero status: ${result.payheroStatus || result.status}`);
+      await loadOrders();
+      document.querySelector('#analytics-refresh')?.click();
+    } catch (error) { window.alert(error.message); checkButton.disabled = false; }
+  });
+
+  const initializeAdminWorkspace = () => {
+    if (!window.adminAccessReady) return;
+    if (document.querySelector('[data-admin-panel="events"]:not([hidden])')) loadEvents();
+    if (document.querySelector('[data-admin-panel="orders"]:not([hidden])')) loadOrders();
+  };
+  if (window.adminAccessReady) initializeAdminWorkspace();
+  else window.addEventListener('twende:admin-unlocked', initializeAdminWorkspace);
+})();
+
 async function deleteUser(userId) {
   if (!window.confirm('Are you sure you want to delete this user?')) return;
   try {

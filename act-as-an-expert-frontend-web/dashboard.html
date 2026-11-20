@@ -53,7 +53,7 @@
       <header class="admin-top-header">
         <div>
           <p class="admin-eyebrow">ORGANIZER DASHBOARD</p>
-          <h1>Overview</h1>
+          <h1>Sales &amp; Analytics</h1>
         </div>
         <button class="admin-lock-button" type="button" data-lock-admin>Lock Admin</button>
         <div class="admin-user-chip" aria-label="Signed in as Admin">
@@ -62,6 +62,14 @@
         </div>
       </header>
 
+      <nav class="admin-tab-bar" role="tablist" aria-label="Admin command center sections">
+        <button class="admin-tab is-active" type="button" role="tab" aria-selected="true" data-admin-tab="analytics">Sales &amp; Analytics</button>
+        <button class="admin-tab" type="button" role="tab" aria-selected="false" data-admin-tab="events">Events &amp; Ticket Tiers</button>
+        <button class="admin-tab" type="button" role="tab" aria-selected="false" data-admin-tab="orders">M-Pesa Reconciliation</button>
+        <button class="admin-tab" type="button" role="tab" aria-selected="false" data-admin-tab="create">Create / Approve Events</button>
+      </nav>
+
+      <section class="admin-tab-panel" data-admin-panel="events" role="tabpanel" hidden>
       <section class="admin-stats-section" aria-labelledby="quick-stats-title">
         <div class="admin-section-heading">
           <div>
@@ -108,7 +116,14 @@
           </table>
         </div>
       </section>
+      <section class="admin-panel admin-manage-events-panel" aria-labelledby="manage-events-title">
+        <div class="admin-section-heading admin-events-heading"><div><p class="admin-eyebrow">PLATFORM INVENTORY</p><h2 id="manage-events-title">Events &amp; Ticket Tiers</h2></div><button class="analytics-refresh-button" id="manage-events-refresh" type="button">Refresh Events</button></div>
+        <p class="admin-tab-feedback" id="manage-events-feedback" role="status" aria-live="polite"></p>
+        <div class="admin-table-wrap"><table class="admin-events-table admin-manage-events-table"><thead><tr><th>Event</th><th>Date</th><th>Venue</th><th>Status</th><th>Manage</th></tr></thead><tbody id="manage-events-body"><tr><td colspan="5" class="admin-table-message">Unlock the dashboard to load events.</td></tr></tbody></table></div>
+      </section>
+      </section>
 
+      <section class="admin-tab-panel" data-admin-panel="analytics" role="tabpanel">
       <section class="admin-analytics-section" id="sales-analytics" aria-labelledby="sales-analytics-title">
         <div class="admin-section-heading analytics-heading">
           <div>
@@ -160,7 +175,38 @@
           </div>
         </section>
       </section>
+      </section>
+
+      <section class="admin-tab-panel" data-admin-panel="orders" role="tabpanel" hidden>
+        <section class="admin-panel admin-orders-panel" aria-labelledby="mpesa-reconciliation-title">
+          <div class="admin-section-heading reconciliation-heading"><div><p class="admin-eyebrow">PAYMENT OPERATIONS</p><h2 id="mpesa-reconciliation-title">M-Pesa Reconciliation</h2></div><button class="analytics-export-button" id="reconcile-all-orders" type="button">Reconcile All Pending Orders</button></div>
+          <p class="reconciliation-feedback" id="reconciliation-feedback" role="status" aria-live="polite"></p>
+          <div class="admin-order-filters" role="group" aria-label="Filter orders by payment status">
+            <button type="button" class="admin-order-filter is-active" data-order-status="all" aria-pressed="true">All Orders</button>
+            <button type="button" class="admin-order-filter" data-order-status="pending" aria-pressed="false">Pending</button>
+            <button type="button" class="admin-order-filter" data-order-status="paid" aria-pressed="false">Paid</button>
+            <button type="button" class="admin-order-filter" data-order-status="failed" aria-pressed="false">Failed</button>
+          </div>
+          <div class="admin-table-wrap"><table class="admin-events-table admin-orders-table"><thead><tr><th>Order #</th><th>Customer &amp; Phone</th><th>Event &amp; Tier</th><th>Amount (KES)</th><th>M-Pesa Receipt</th><th>Status</th><th>Created At</th><th>Actions</th></tr></thead><tbody id="admin-orders-body"><tr><td colspan="8" class="admin-table-message">Unlock the dashboard to load orders.</td></tr></tbody></table></div>
+        </section>
+      </section>
+
+      <section class="admin-tab-panel" data-admin-panel="create" role="tabpanel" hidden>
+        <section class="admin-panel admin-create-approve-panel" aria-labelledby="create-approve-title">
+          <p class="admin-eyebrow">ORGANIZER WORKFLOW</p><h2 id="create-approve-title">Create / Approve Events</h2>
+          <p>Create a new event or review organizer submissions waiting for approval.</p>
+          <div class="admin-workflow-links"><a class="admin-workflow-card" href="create-event.html"><span>＋</span><strong>Create an Event</strong><small>Set up event details, ticket tiers and publish.</small></a><a class="admin-workflow-card" href="admin-approvals.html"><span>✓</span><strong>Review Pending Approvals</strong><small>Inspect, edit, approve or reject submitted events.</small></a></div>
+        </section>
+      </section>
     </main>
+  </div>
+  <div class="admin-modal-overlay" id="edit-admin-event-modal" role="dialog" aria-modal="true" aria-labelledby="edit-admin-event-title" hidden>
+    <form class="admin-edit-form" id="edit-admin-event-form"><button class="admin-modal-close" type="button" data-close-admin-modal aria-label="Close">&times;</button><p class="admin-eyebrow">EVENT MANAGEMENT</p><h2 id="edit-admin-event-title">Edit Event</h2><input type="hidden" name="event_id">
+      <label>Title<input name="title" required></label><label>Date &amp; Time<input name="start_time" type="datetime-local" required></label><div class="admin-form-two-col"><label>Venue<input name="venue" required></label><label>Location<input name="location"></label></div><div class="admin-form-two-col"><label>Category<input name="category"></label><label>Poster URL<input name="poster_url" type="url"></label></div><label>Description<textarea name="description" rows="4"></textarea></label><label>Status<select name="status"><option value="draft">Draft</option><option value="published">Published</option></select></label><p class="admin-modal-feedback" id="edit-admin-event-feedback" role="status"></p><button class="admin-unlock-button" type="submit">Save Event Changes</button>
+    </form>
+  </div>
+  <div class="admin-modal-overlay" id="manage-admin-tiers-modal" role="dialog" aria-modal="true" aria-labelledby="manage-admin-tiers-title" hidden>
+    <section class="admin-tiers-dialog"><button class="admin-modal-close" type="button" data-close-admin-modal aria-label="Close">&times;</button><p class="admin-eyebrow">TICKET INVENTORY</p><h2 id="manage-admin-tiers-title">Manage Ticket Tiers</h2><p id="manage-admin-tiers-event" class="admin-tiers-event-title"></p><div id="admin-tiers-list" class="admin-tiers-list"></div><form id="add-admin-tier-form" class="admin-add-tier-form"><h3>Add New Tier</h3><label>Tier Name<input name="tier_name" required></label><div class="admin-form-two-col"><label>Price (KES)<input name="price" type="number" min="0" step="0.01" required></label><label>Remaining Stock<input name="remaining_quantity" type="number" min="0" step="1" required></label></div><label>Description<input name="description"></label><p class="admin-modal-feedback" id="tiers-feedback" role="status"></p><button class="admin-unlock-button" type="submit">Add Ticket Tier</button></form></section>
   </div>
   <section class="admin-access-overlay" id="admin-access-modal" role="dialog" aria-modal="true" aria-labelledby="admin-access-title">
     <form class="admin-access-card" id="admin-access-form">

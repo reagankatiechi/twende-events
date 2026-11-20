@@ -1125,3 +1125,80 @@ body.review-modal-open { overflow: hidden; }
 .verify-feedback { min-height: 18px; margin: 12px 0 0; color: #706967; font-size: 11px; line-height: 1.5; }
 .verify-footnote { max-width: 500px; margin: 15px auto 0; color: #898381; font-size: 10px; line-height: 1.6; text-align: center; }
 @media (max-width: 560px) { .verify-header { min-height: 58px; padding-right: 15px; padding-left: 15px; } .verify-brand { font-size: 16px; } .verify-header-label { font-size: 8px; } .verify-details { grid-template-columns: 1fr; } .user-ticket-summary { grid-template-columns: 1fr; } }
+
+/* Admin Command Center Tabs */
+.admin-tab-bar { display: flex; gap: 5px; margin: 0 0 24px; padding: 5px; overflow-x: auto; border: 1px solid #e9e8eb; border-radius: 10px; background: #fff; scrollbar-width: thin; }
+.admin-tab { flex: 0 0 auto; min-height: 42px; padding: 0 16px; border: 0; border-radius: 7px; background: transparent; color: #716d70; font: 700 11px 'DM Sans', sans-serif; cursor: pointer; transition: background .18s ease, color .18s ease; }
+.admin-tab:hover, .admin-tab.is-active { background: #fff0f0; color: #d90000; }
+.admin-tab-panel[hidden] { display: none !important; }
+.admin-panel { overflow: hidden; margin-top: 18px; border: 1px solid #e9e9ec; border-radius: 12px; background: #fff; box-shadow: 0 5px 20px rgba(20,20,25,.035); }
+.admin-manage-events-panel .admin-section-heading, .admin-orders-panel .admin-section-heading { padding: 20px 22px 14px; }
+.admin-tab-feedback, .reconciliation-feedback { min-height: 18px; margin: 0 22px 14px; color: #827a78; font-size: 10px; }
+.admin-tab-feedback.is-error, .admin-modal-feedback.is-error { color: #b42318; }
+.admin-manage-events-table td { white-space: normal; }
+.admin-manage-events-table td:nth-child(2), .admin-manage-events-table td:nth-child(4) { white-space: nowrap; }
+.managed-event-cell { display: flex; min-width: 205px; align-items: center; gap: 11px; }
+.managed-event-cell img, .managed-event-placeholder { display: grid; flex: 0 0 42px; width: 42px; height: 42px; place-items: center; overflow: hidden; border-radius: 7px; background: #f4eeee; color: #ca0000; object-fit: cover; font-size: 10px; font-weight: 900; }
+.managed-event-cell strong { white-space: normal; }
+.admin-manage-events-table td small, .admin-orders-table td small { display: block; margin-top: 4px; color: #938b89; font-size: 9px; }
+.admin-row-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.admin-row-button { min-height: 31px; padding: 0 9px; border: 1px solid #e60000; border-radius: 6px; background: #e60000; color: #fff; font: 700 9px 'DM Sans', sans-serif; white-space: nowrap; cursor: pointer; }
+.admin-row-button:hover { border-color: #c90000; background: #c90000; }
+.admin-row-button:disabled { opacity: .55; cursor: wait; }
+.admin-row-button.is-secondary { border-color: #e4e0df; background: #fff; color: #494342; }
+.admin-row-button.is-secondary:hover { border-color: #e60000; background: #fff5f5; color: #d90000; }
+.admin-row-button.is-warning { border-color: #d59224; background: #fff8e9; color: #805614; }
+.admin-row-button.is-warning:hover { border-color: #bf7d0d; background: #fff0d2; }
+.admin-status-draft { background: #f3f1f1; color: #696363; }
+.admin-status-published, .admin-status-approved { background: #eaf8ef; color: #228348; }
+.admin-status-pending { background: #fff5df; color: #946519; }
+
+/* M-Pesa Reconciliation Workspace */
+.reconciliation-heading { align-items: center; flex-wrap: wrap; gap: 14px; }
+.admin-order-filters { display: flex; flex-wrap: wrap; gap: 7px; padding: 0 22px 15px; }
+.admin-order-filter { min-height: 31px; padding: 0 12px; border: 1px solid #e9e5e3; border-radius: 999px; background: #fff; color: #746d6b; font: 700 9px 'DM Sans', sans-serif; cursor: pointer; }
+.admin-order-filter:hover, .admin-order-filter.is-active { border-color: #e60000; background: #e60000; color: #fff; }
+.admin-orders-table { min-width: 1020px; }
+.admin-order-status { display: inline-flex; padding: 5px 8px; border-radius: 999px; font-size: 8px; font-weight: 800; text-transform: capitalize; }
+.admin-order-status.is-paid { background: #eaf8ef; color: #228348; }
+.admin-order-status.is-pending { background: #fff5df; color: #946519; }
+.admin-order-status.is-failed { background: #ffeded; color: #b42318; }
+.admin-order-complete { color: #25824b; font-size: 9px; font-weight: 700; }
+.admin-orders-table td { white-space: nowrap; }
+
+/* Create and Approval Shortcuts */
+.admin-create-approve-panel { padding: 27px; }
+.admin-create-approve-panel h2 { margin: 7px 0; font: 800 24px 'Manrope', sans-serif; letter-spacing: -.6px; }
+.admin-create-approve-panel > p:not(.admin-eyebrow) { color: #7d7674; font-size: 12px; }
+.admin-workflow-links { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 22px; }
+.admin-workflow-card { display: grid; grid-template-columns: 44px minmax(0,1fr); gap: 4px 13px; align-items: center; padding: 18px; border: 1px solid #eeebea; border-radius: 10px; background: #fff; color: #242020; text-decoration: none; transition: border .18s ease, transform .18s ease, box-shadow .18s ease; }
+.admin-workflow-card:hover { transform: translateY(-2px); border-color: #f1b8b8; box-shadow: 0 8px 22px #2a171710; }
+.admin-workflow-card > span { display: grid; grid-row: span 2; width: 42px; height: 42px; place-items: center; border-radius: 9px; background: #fff0f0; color: #df0000; font-size: 21px; font-weight: 800; }
+.admin-workflow-card strong { font-size: 13px; }
+.admin-workflow-card small { color: #898280; font-size: 10px; line-height: 1.45; }
+
+/* Admin Event and Ticket Tier Modals */
+.admin-modal-overlay { position: fixed; z-index: 8000; inset: 0; display: grid; place-items: center; overflow-y: auto; padding: 20px; background: rgba(15,15,18,.66); backdrop-filter: blur(4px); }
+.admin-modal-overlay[hidden] { display: none !important; }
+.admin-edit-form, .admin-tiers-dialog { position: relative; width: min(100%, 620px); max-height: calc(100vh - 40px); overflow-y: auto; padding: 30px; border: 1px solid #ebe8e7; border-radius: 14px; background: #fff; box-shadow: 0 25px 75px #0003; }
+.admin-tiers-dialog { width: min(100%, 720px); }
+.admin-edit-form h2, .admin-tiers-dialog h2 { margin: 5px 0 18px; color: #211d1c; font: 800 23px 'Manrope', sans-serif; }
+.admin-modal-close { position: absolute; top: 13px; right: 14px; display: grid; width: 35px; height: 35px; place-items: center; border: 0; border-radius: 50%; background: #f5f3f2; color: #5f5856; font-size: 23px; cursor: pointer; }
+.admin-edit-form label, .admin-add-tier-form label, .admin-tier-edit-form label { display: grid; gap: 6px; margin-bottom: 12px; color: #817a78; font-size: 9px; font-weight: 800; letter-spacing: .45px; }
+.admin-edit-form input, .admin-edit-form textarea, .admin-edit-form select, .admin-add-tier-form input, .admin-tier-edit-form input { width: 100%; min-height: 40px; padding: 9px 11px; border: 1px solid #e4dfdd; border-radius: 6px; outline: 0; background: #fff; color: #292423; font: 500 11px 'DM Sans', sans-serif; letter-spacing: 0; }
+.admin-edit-form textarea { resize: vertical; }
+.admin-edit-form input:focus, .admin-edit-form textarea:focus, .admin-edit-form select:focus, .admin-add-tier-form input:focus, .admin-tier-edit-form input:focus { border-color: #e60000; box-shadow: 0 0 0 3px #e6000014; }
+.admin-form-two-col { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.admin-modal-feedback { min-height: 16px; margin: 6px 0 10px; color: #6f6967; font-size: 10px; }
+.admin-tiers-event-title { margin: -8px 0 17px; color: #77706d; font-size: 12px; }
+.admin-tiers-list { display: grid; gap: 11px; max-height: 38vh; overflow-y: auto; margin-bottom: 18px; }
+.admin-tier-edit-form { padding: 14px; border: 1px solid #eeeae8; border-radius: 9px; background: #fdfcfb; }
+.admin-tier-edit-form > strong { display: block; margin-bottom: 12px; color: #282321; font-size: 12px; }
+.admin-tier-edit-form .admin-form-two-col { gap: 10px; }
+.admin-tier-edit-form label { margin-bottom: 8px; }
+.admin-tier-edit-form input, .admin-add-tier-form input { min-height: 36px; }
+.admin-add-tier-form { padding-top: 18px; border-top: 1px solid #ebe8e6; }
+.admin-add-tier-form h3 { margin: 0 0 13px; font: 800 15px 'Manrope', sans-serif; }
+body.admin-modal-open { overflow: hidden; }
+@media (max-width: 760px) { .admin-tab-bar { margin-bottom: 19px; } .admin-tab { padding: 0 12px; font-size: 10px; } .reconciliation-heading { align-items: flex-start !important; } .admin-workflow-links { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .admin-edit-form, .admin-tiers-dialog { padding: 25px 18px 20px; } .admin-form-two-col { grid-template-columns: 1fr; gap: 0; } .admin-create-approve-panel { padding: 21px 17px; } .admin-order-filters { padding-right: 15px; padding-left: 15px; } .admin-manage-events-panel .admin-section-heading, .admin-orders-panel .admin-section-heading { padding: 18px 15px 12px; } .admin-tab-feedback, .reconciliation-feedback { margin-right: 15px; margin-left: 15px; } }

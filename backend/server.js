@@ -130,7 +130,8 @@ async function ensurePaymentSchema() {
                 tier_name: 'VARCHAR(255) NULL',
                 price: 'DECIMAL(12,2) NOT NULL DEFAULT 0',
                 capacity: 'INT NULL',
-                quantity_sold: 'INT NOT NULL DEFAULT 0'
+                quantity_sold: 'INT NOT NULL DEFAULT 0',
+                description: 'TEXT NULL'
             }
         };
 
@@ -343,6 +344,124 @@ app.get('/api/admin/analytics', async (req, res) => {
     } catch (error) {
         console.error('Error loading admin revenue analytics:', error);
         return res.status(500).json({ error: 'Failed to load revenue analytics.' });
+    }
+});
+
+// Latest orders for the admin reconciliation workspace.
+app.get('/api/admin/orders', async (req, res) => {
+    const requestedStatus = String(req.query.status || '').trim().toLowerCase();
+    const allowedStatuses = new Set(['pending', 'paid', 'failed']);
+    if (requestedStatus && !allowedStatuses.has(requestedStatus)) {
+        return res.status(400).json({ error: 'status must be pending, paid, or failed.' });
+    }
+    try {
+        const [orders] = await pool.query(
+            `SELECT o.order_id, o.event_id, e.title AS event_title,
+                    COALESCE(NULLIF(tt.tier_name, ''), 'General') AS tier_name,
+                    o.quantity, o.total_amount,
+                    COALESCE(NULLIF(o.phone_number, ''), NULLIF(o.checkout_phone, ''), u.phone_number, 'N/A') AS phone_number,
+                    COALESCE(NULLIF(o.attendee_name, ''), NULLIF(u.full_name, ''), 'Guest Attendee') AS attendee_name,
+                    o.external_reference, o.payhero_reference, o.mpesa_receipt_number,
+                    o.payment_status, COALESCE(o.failure_reason, o.payment_failure_reason) AS failure_reason, o.created_at
+             FROM Orders o
+             LEFT JOIN Events e ON e.event_id = o.event_id
+             LEFT JOIN Ticket_Tiers tt ON tt.tier_id = o.tier_id
+             LEFT JOIN Users u ON u.user_id = o.user_id
+             WHERE (? = '' OR LOWER(o.payment_status) = ? OR (? = 'paid' AND LOWER(o.payment_status) = 'completed'))
+             ORDER BY o.created_at DESC, o.order_id DESC
+             LIMIT 100`,
+            [requestedStatus, requestedStatus, requestedStatus]
+        );
+        return res.status(200).json(orders);
+    } catch (error) {
+        console.error('Error loading admin orders:', error);
+        return res.status(500).json({ error: 'Failed to load M-Pesa orders.' });
+    }
+});
+
+app.post('/api/admin/orders/reconcile-all', async (req, res) => {
+    try {
+        const [orders] = await pool.query(
+            `SELECT order_id, payhero_reference, external_reference, mpesa_receipt_number
+             FROM Orders
+             WHERE LOWER(payment_status) = 'pending'
+               AND created_at >= DATE_SUB(NOW(), INTERVAL 72 HOUR)
+             ORDER BY created_at ASC, order_id ASC`
+        );
+        const details = [];
+        let reconciled = 0;
+        for (const order of orders) {
+            const reference = order.payhero_reference || order.external_reference;
+            if (!reference) {
+                details.push({ order_id: order.order_id, status: 'skipped', message: 'No PayHero reference.' });
+                continue;
+            }
+            try {
+                const data = await fetchPayHeroTransactionStatus(reference);
+                const status = readPayHeroStatus(data);
+                if (status.paid) {
+                    const result = await fulfillPaidOrder(order.order_id, status.receipt || order.mpesa_receipt_number);
+                    if (result.status === 'paid') reconciled += 1;
+                    details.push({ order_id: order.order_id, status: result.status, mpesaReceipt: result.mpesaReceipt || status.receipt || null });
+                } else {
+                    details.push({ order_id: order.order_id, status: status.statuses[0] || 'pending' });
+                }
+            } catch (error) {
+                console.error(`[admin reconcile all] Order ${order.order_id} failed:`, error);
+                details.push({ order_id: order.order_id, status: 'error', message: error.message });
+            }
+        }
+        return res.status(200).json({ checked: orders.length, reconciled, details });
+    } catch (error) {
+        console.error('Error reconciling pending admin orders:', error);
+        return res.status(500).json({ error: 'Could not reconcile pending orders.' });
+    }
+});
+
+app.post('/api/admin/orders/:orderId/reconcile', async (req, res) => {
+    const orderId = Number(req.params.orderId);
+    if (!Number.isSafeInteger(orderId) || orderId < 1) return res.status(400).json({ error: 'Invalid order ID.' });
+    try {
+        const [orders] = await pool.query(
+            `SELECT order_id, payment_status, payhero_reference, external_reference, mpesa_receipt_number
+             FROM Orders WHERE order_id = ? LIMIT 1`,
+            [orderId]
+        );
+        if (!orders.length) return res.status(404).json({ error: 'Order not found.' });
+        const order = orders[0];
+        const currentStatus = String(order.payment_status || 'pending').toLowerCase();
+        if (currentStatus === 'paid' || currentStatus === 'completed') {
+            return res.status(200).json({ status: 'paid', mpesaReceipt: order.mpesa_receipt_number || null });
+        }
+        const reference = order.payhero_reference || order.external_reference;
+        if (!reference) return res.status(400).json({ error: 'This order has no PayHero reference to check.' });
+        const data = await fetchPayHeroTransactionStatus(reference);
+        const status = readPayHeroStatus(data);
+        if (status.paid) {
+            const result = await fulfillPaidOrder(order.order_id, status.receipt || order.mpesa_receipt_number);
+            return res.status(200).json({ status: result.status, mpesaReceipt: result.mpesaReceipt || status.receipt || null });
+        }
+        return res.status(200).json({ status: currentStatus, payheroStatus: status.statuses[0] || 'pending' });
+    } catch (error) {
+        console.error(`Error reconciling admin order ${orderId}:`, error);
+        return res.status(502).json({ error: 'PayHero could not verify this order right now.' });
+    }
+});
+
+app.post('/api/admin/orders/:orderId/manual-fulfill', async (req, res) => {
+    const orderId = Number(req.params.orderId);
+    const mpesaReceipt = String(req.body?.mpesaReceipt || '').trim().toUpperCase();
+    if (!Number.isSafeInteger(orderId) || orderId < 1) return res.status(400).json({ error: 'Invalid order ID.' });
+    if (!mpesaReceipt) return res.status(400).json({ error: 'Enter the M-Pesa SMS receipt code.' });
+    try {
+        const [orders] = await pool.query(`SELECT order_id FROM Orders WHERE order_id = ? LIMIT 1`, [orderId]);
+        if (!orders.length) return res.status(404).json({ error: 'Order not found.' });
+        const result = await fulfillPaidOrder(orderId, mpesaReceipt);
+        if (!result.found) return res.status(404).json({ error: 'Order not found.' });
+        return res.status(200).json({ success: true, status: result.status, mpesaReceipt: result.mpesaReceipt || mpesaReceipt, tickets: result.tickets });
+    } catch (error) {
+        console.error(`Error manually fulfilling admin order ${orderId}:`, error);
+        return res.status(500).json({ error: 'Could not issue tickets for this receipt.' });
     }
 });
 
@@ -1280,13 +1399,14 @@ app.put('/api/admin/events/:id/approve', async (req, res) => {
 
     }
 });
-// List all approved events across organizers for the admin dashboard.
+// List all event states for the protected event-management workspace.
 app.get('/api/admin/events', async (req, res) => {
     try {
         const [events] = await pool.query(
-            `SELECT * FROM Events
-             WHERE approval_status = 'approved'
-             ORDER BY start_time DESC`
+            `SELECT event_id, title, description, start_time, venue, city AS location,
+                    category, poster_url, status, approval_status, organizer_id
+             FROM Events
+             ORDER BY start_time DESC, event_id DESC`
         );
         res.status(200).json(events);
     } catch (error) {
@@ -1294,23 +1414,111 @@ app.get('/api/admin/events', async (req, res) => {
         res.status(500).json({ error: 'Failed to load admin events' });
     }
 });
-// Update an event's details before approval
-app.put('/api/admin/events/:id', async (req, res) => {
+app.get('/api/admin/events/:eventId/tiers', async (req, res) => {
+    const eventId = Number(req.params.eventId);
+    if (!Number.isSafeInteger(eventId) || eventId < 1) return res.status(400).json({ error: 'Invalid event ID.' });
     try {
-        const eventId = req.params.id;
-        const { title, category, venue, start_time, description } = req.body;
-
-        await pool.query(
-            `UPDATE Events 
-             SET title = ?, category = ?, venue = ?, start_time = ?, description = ? 
-             WHERE event_id = ?`,
-            [title, category, venue, start_time, description, eventId]
+        const [tiers] = await pool.query(
+            `SELECT tier_id, event_id, tier_name, price, description, quantity_sold,
+                    CASE WHEN capacity IS NULL THEN NULL ELSE GREATEST(capacity - COALESCE(quantity_sold, 0), 0) END AS remaining_quantity
+             FROM Ticket_Tiers WHERE event_id = ? ORDER BY tier_id ASC`,
+            [eventId]
         );
-
-        res.status(200).json({ message: 'Event updated successfully!' });
+        return res.status(200).json(tiers);
+    } catch (error) {
+        console.error(`Error loading tiers for event ${eventId}:`, error);
+        return res.status(500).json({ error: 'Failed to load ticket tiers.' });
+    }
+});
+// Update an event's editable fields from the protected admin workspace.
+app.put('/api/admin/events/:id', async (req, res) => {
+    const eventId = Number(req.params.id);
+    if (!Number.isSafeInteger(eventId) || eventId < 1) return res.status(400).json({ error: 'Invalid event ID.' });
+    const { title, description, event_date, start_time, venue, location, category, poster_url, status } = req.body || {};
+    try {
+        const [currentRows] = await pool.query(
+            `SELECT title, description, start_time, venue, city, category, poster_url, status, approval_status
+             FROM Events WHERE event_id = ? LIMIT 1`,
+            [eventId]
+        );
+        if (!currentRows.length) return res.status(404).json({ error: 'Event not found.' });
+        const current = currentRows[0];
+        const cleanTitle = title === undefined ? current.title : String(title || '').trim();
+        const cleanVenue = venue === undefined ? current.venue : String(venue || '').trim();
+        const rawStart = start_time === undefined && event_date === undefined ? current.start_time : (start_time || event_date);
+        const eventStart = String(rawStart || '').trim().replace('T', ' ');
+        const eventStatus = status === undefined ? String(current.status || 'draft').trim().toLowerCase() : String(status || '').trim().toLowerCase();
+        if (!cleanTitle || !cleanVenue || !eventStart) return res.status(400).json({ error: 'Title, date and venue are required.' });
+        if (!['draft', 'published'].includes(eventStatus)) return res.status(400).json({ error: 'Status must be draft or published.' });
+        const approvalStatus = status === undefined
+            ? current.approval_status
+            : (eventStatus === 'published' ? 'approved' : 'pending');
+        const [result] = await pool.query(
+            `UPDATE Events
+             SET title = ?, description = ?, start_time = ?, venue = ?, city = ?, category = ?, poster_url = ?,
+                 status = ?, approval_status = ?
+             WHERE event_id = ?`,
+            [cleanTitle,
+                description === undefined ? current.description : String(description || '').trim(),
+                eventStart, cleanVenue,
+                location === undefined ? current.city : String(location || '').trim(),
+                category === undefined ? current.category : String(category || '').trim(),
+                poster_url === undefined ? current.poster_url : (String(poster_url || '').trim() || null),
+                eventStatus, approvalStatus, eventId]
+        );
+        return res.status(200).json({ success: true, message: 'Event updated successfully.' });
     } catch (error) {
         console.error('Error updating event:', error);
-        res.status(500).json({ error: 'Failed to update event' });
+        return res.status(500).json({ error: 'Failed to update event.' });
+    }
+});
+
+app.put('/api/admin/tiers/:tierId', async (req, res) => {
+    const tierId = Number(req.params.tierId);
+    const tierName = String(req.body?.tier_name || '').trim();
+    const price = Number(req.body?.price);
+    const remainingQuantity = Number(req.body?.remaining_quantity);
+    const description = String(req.body?.description || '').trim();
+    if (!Number.isSafeInteger(tierId) || tierId < 1) return res.status(400).json({ error: 'Invalid ticket tier ID.' });
+    if (!tierName || !Number.isFinite(price) || price < 0 || !Number.isSafeInteger(remainingQuantity) || remainingQuantity < 0) {
+        return res.status(400).json({ error: 'Enter a tier name, non-negative price, and non-negative whole-number stock.' });
+    }
+    try {
+        const [rows] = await pool.query(`SELECT quantity_sold FROM Ticket_Tiers WHERE tier_id = ? LIMIT 1`, [tierId]);
+        if (!rows.length) return res.status(404).json({ error: 'Ticket tier not found.' });
+        await pool.query(
+            `UPDATE Ticket_Tiers SET tier_name = ?, price = ?, capacity = COALESCE(quantity_sold, 0) + ?, description = ? WHERE tier_id = ?`,
+            [tierName, price, remainingQuantity, description || null, tierId]
+        );
+        return res.status(200).json({ success: true, message: 'Ticket tier updated.' });
+    } catch (error) {
+        console.error('Error updating ticket tier:', error);
+        return res.status(500).json({ error: 'Failed to update ticket tier.' });
+    }
+});
+
+app.post('/api/admin/events/:eventId/tiers', async (req, res) => {
+    const eventId = Number(req.params.eventId);
+    const tierName = String(req.body?.tier_name || '').trim();
+    const price = Number(req.body?.price);
+    const remainingQuantity = Number(req.body?.remaining_quantity);
+    const description = String(req.body?.description || '').trim();
+    if (!Number.isSafeInteger(eventId) || eventId < 1) return res.status(400).json({ error: 'Invalid event ID.' });
+    if (!tierName || !Number.isFinite(price) || price < 0 || !Number.isSafeInteger(remainingQuantity) || remainingQuantity < 0) {
+        return res.status(400).json({ error: 'Enter a tier name, non-negative price, and non-negative whole-number stock.' });
+    }
+    try {
+        const [events] = await pool.query(`SELECT event_id FROM Events WHERE event_id = ? LIMIT 1`, [eventId]);
+        if (!events.length) return res.status(404).json({ error: 'Event not found.' });
+        const [result] = await pool.query(
+            `INSERT INTO Ticket_Tiers (event_id, tier_name, price, capacity, quantity_sold, description)
+             VALUES (?, ?, ?, ?, 0, ?)`,
+            [eventId, tierName, price, remainingQuantity, description || null]
+        );
+        return res.status(201).json({ success: true, tier_id: result.insertId, message: 'Ticket tier added.' });
+    } catch (error) {
+        console.error('Error adding ticket tier:', error);
+        return res.status(500).json({ error: 'Failed to add ticket tier.' });
     }
 });
 // Delete an event by ID
