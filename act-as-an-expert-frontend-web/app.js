@@ -1557,11 +1557,14 @@ async function deleteEvent(eventId) {
       const response = await window.adminFetch(`${API_BASE_URL}/api/events/${encodeURIComponent(eventId)}`, {
       method: 'DELETE'
     });
-    if (!response.ok) throw new Error(`Delete request failed (${response.status})`);
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || data.message || `Delete request failed (${response.status})`);
+    }
     window.location.reload();
   } catch (error) {
     console.error('Unable to delete event:', error);
-    window.alert('The event could not be deleted. Please try again.');
+    window.alert(error.message || 'The event could not be deleted. Please try again.');
   }
 }
 

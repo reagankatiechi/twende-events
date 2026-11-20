@@ -1523,22 +1523,55 @@ app.post('/api/admin/events/:eventId/tiers', async (req, res) => {
 });
 // Delete an event by ID
 app.delete('/api/events/:id', requireAdminAccess, async (req, res) => {
+    const eventId = Number(req.params.id);
+    if (!Number.isSafeInteger(eventId) || eventId < 1) {
+        return res.status(400).json({ error: 'Invalid event ID.' });
+    }
+    const conn = await pool.getConnection();
     try {
-        const eventId = req.params.id;
-        
-        const [result] = await pool.query(
-            `DELETE FROM Events WHERE event_id = ?`,
-            [eventId]
-        );
-
-        if (result.affectedRows === 0) {
-            return res.status(404).json({ error: 'Event not found' });
+        await conn.beginTransaction();
+        const [events] = await conn.query(`SELECT event_id FROM Events WHERE event_id = ? LIMIT 1 FOR UPDATE`, [eventId]);
+        if (!events.length) {
+            await conn.rollback();
+            return res.status(404).json({ error: 'Event not found.' });
         }
 
-        res.status(200).json({ message: 'Event deleted successfully' });
-    } catch (error) {
-        console.error('Error deleting event:', error);
-        res.status(500).json({ error: 'Failed to delete event' });
+        // Delete children first so foreign keys cannot block the event row.
+        for (const [table, sql] of [
+            ['Saved_Events', 'DELETE FROM Saved_Events WHERE event_id = ?'],
+            ['Purchased_Tickets', `DELETE FROM Purchased_Tickets
+                WHERE event_id = ? OR tier_id IN (SELECT tier_id FROM Ticket_Tiers WHERE event_id = ?)
+                   OR order_id IN (SELECT order_id FROM Orders WHERE event_id = ? OR tier_id IN (SELECT tier_id FROM Ticket_Tiers WHERE event_id = ?))`],
+            ['Tickets', `DELETE FROM Tickets
+                WHERE tier_id IN (SELECT tier_id FROM Ticket_Tiers WHERE event_id = ?)
+                   OR order_id IN (SELECT order_id FROM Orders WHERE event_id = ? OR tier_id IN (SELECT tier_id FROM Ticket_Tiers WHERE event_id = ?))`],
+            ['Orders by tier', 'DELETE FROM Orders WHERE tier_id IN (SELECT tier_id FROM Ticket_Tiers WHERE event_id = ?)'],
+            ['Orders by event', 'DELETE FROM Orders WHERE event_id = ?'],
+            ['Ticket_Tiers', 'DELETE FROM Ticket_Tiers WHERE event_id = ?']
+        ]) {
+            try {
+                await conn.query(sql, Array((sql.match(/\?/g) || []).length).fill(eventId));
+            } catch (error) {
+                // Some legacy installs may not have an optional child table/column.
+                const missingSchemaObject = error.code === 'ER_NO_SUCH_TABLE' || error.code === 'ER_BAD_FIELD_ERROR';
+                if (!missingSchemaObject) throw error;
+                console.warn(`[Delete Event] Skipped optional cleanup for ${table}:`, error.message);
+            }
+        }
+
+        const [result] = await conn.query(`DELETE FROM Events WHERE event_id = ?`, [eventId]);
+        if (!result.affectedRows) {
+            await conn.rollback();
+            return res.status(404).json({ error: 'Event not found.' });
+        }
+        await conn.commit();
+        return res.status(200).json({ success: true, message: 'Event deleted successfully.' });
+    } catch (err) {
+        await conn.rollback();
+        console.error('[Delete Event Error]', err);
+        return res.status(500).json({ error: err.sqlMessage || err.message });
+    } finally {
+        conn.release();
     }
 });
 
