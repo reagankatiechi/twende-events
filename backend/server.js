@@ -1419,6 +1419,94 @@ app.post('/api/tickets/mock-purchase', (req, res) => {
 });
 
 // Consolidated attendee hub data; reconciliation runs before the wallet is read.
+app.post('/api/tickets/:ticketId/transfer', authenticateUser, async (req, res) => {
+    const ticketId = Number(req.params.ticketId);
+    const recipientIdentifier = String(req.body?.recipientIdentifier || '').trim();
+    if (!Number.isSafeInteger(ticketId) || ticketId < 1) {
+        return res.status(400).json({ error: 'Invalid ticket.' });
+    }
+    if (!recipientIdentifier) {
+        return res.status(400).json({ error: 'Enter your friend’s email or phone number.' });
+    }
+    const emailIdentifier = recipientIdentifier.includes('@') ? recipientIdentifier : '';
+    const phoneDigits = recipientIdentifier.includes('@') ? '' : recipientIdentifier.replace(/\D/g, '').slice(-9);
+    if (!emailIdentifier && !/^\d{9}$/.test(phoneDigits)) {
+        return res.status(400).json({ error: 'Enter a valid email or Kenyan mobile number.' });
+    }
+
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+        const senderId = Number(req.authUser.user_id);
+        const [ticketRows] = await connection.query(
+            `SELECT pt.ticket_id, pt.user_id, pt.status, pt.ticket_code
+             FROM Purchased_Tickets pt
+             LEFT JOIN Orders o ON o.order_id = pt.order_id
+             WHERE pt.ticket_id = ?
+               AND (pt.user_id = ? OR (pt.user_id IS NULL AND o.user_id = ?))
+             LIMIT 1 FOR UPDATE`,
+            [ticketId, senderId, senderId]
+        );
+        if (!ticketRows.length) {
+            await connection.rollback();
+            return res.status(404).json({ error: 'Ticket not found in your account.' });
+        }
+        const ticket = ticketRows[0];
+        if (String(ticket.status || '').toLowerCase() !== 'valid') {
+            await connection.rollback();
+            return res.status(400).json({ error: 'Only valid, unused tickets can be transferred.' });
+        }
+
+        const [recipients] = await connection.query(
+            `SELECT user_id AS id, full_name, email, phone_number
+             FROM Users
+             WHERE (? <> '' AND LOWER(email) = LOWER(?))
+                OR (? <> '' AND RIGHT(REPLACE(phone_number, '+', ''), 9) = ?)
+             LIMIT 1`,
+            [emailIdentifier, emailIdentifier, phoneDigits, phoneDigits]
+        );
+        const recipient = recipients[0];
+        if (!recipient) {
+            await connection.rollback();
+            return res.status(404).json({
+                error: 'No Twende Events account found for that email or phone number. Ask your friend to sign up first!'
+            });
+        }
+        if (Number(recipient.id) === senderId) {
+            await connection.rollback();
+            return res.status(400).json({ error: 'You already own this ticket.' });
+        }
+
+        const newTicketCode = randomUUID();
+        const [updateResult] = await connection.query(
+            `UPDATE Purchased_Tickets
+             SET user_id = ?, ticket_code = ?, qr_code_data = ?
+             WHERE ticket_id = ? AND LOWER(status) = 'valid'`,
+            [recipient.id, newTicketCode, newTicketCode, ticketId]
+        );
+        if (!updateResult.affectedRows) {
+            await connection.rollback();
+            return res.status(400).json({ error: 'This ticket is no longer available to transfer.' });
+        }
+        await connection.query(
+            `UPDATE Tickets SET user_id = ?, ticket_code = ?, is_scanned = 0 WHERE ticket_code = ?`,
+            [recipient.id, newTicketCode, ticket.ticket_code]
+        );
+        await connection.commit();
+        return res.status(200).json({
+            success: true,
+            message: `Ticket transferred successfully to ${recipient.full_name}`,
+            recipientName: recipient.full_name
+        });
+    } catch (error) {
+        await connection.rollback();
+        console.error('Error transferring ticket:', error);
+        return res.status(500).json({ error: 'Could not transfer this ticket right now.' });
+    } finally {
+        connection.release();
+    }
+});
+
 app.get('/api/user/dashboard', authenticateUser, async (req, res) => {
     try {
         await reconcilePendingOrdersForUser(req.user);
@@ -1445,8 +1533,9 @@ app.get('/api/user/dashboard', authenticateUser, async (req, res) => {
              LEFT JOIN Users u ON u.user_id = COALESCE(pt.user_id, o.user_id)
              LEFT JOIN Events e ON e.event_id = COALESCE(pt.event_id, o.event_id)
              LEFT JOIN Ticket_Tiers tt ON tt.tier_id = COALESCE(pt.tier_id, t.tier_id, o.tier_id)
-             WHERE pt.user_id = ? OR o.user_id = ? OR LOWER(o.attendee_email) = LOWER(?)
-                OR (o.user_id IS NULL AND ? <> '' AND RIGHT(REPLACE(COALESCE(NULLIF(o.phone_number, ''), o.checkout_phone), '+', ''), 9) = ?)
+             WHERE pt.user_id = ?
+                OR (pt.user_id IS NULL AND (o.user_id = ? OR LOWER(o.attendee_email) = LOWER(?)
+                    OR (o.user_id IS NULL AND ? <> '' AND RIGHT(REPLACE(COALESCE(NULLIF(o.phone_number, ''), o.checkout_phone), '+', ''), 9) = ?)))
              ORDER BY pt.purchase_date DESC, pt.ticket_id DESC`,
             [userId, userId, account.email, phoneDigits, phoneDigits]
         );

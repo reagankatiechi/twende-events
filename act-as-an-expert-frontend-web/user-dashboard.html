@@ -104,6 +104,24 @@
     </div>
   </div>
 
+  <div class="transfer-ticket-modal" id="transfer-ticket-modal" role="dialog" aria-modal="true" aria-labelledby="transfer-ticket-heading" hidden>
+    <section class="transfer-ticket-card">
+      <button class="transfer-ticket-close" id="transfer-ticket-close" type="button" aria-label="Close transfer dialog">&times;</button>
+      <p class="user-dashboard-eyebrow">SHARE THE NIGHT</p>
+      <h2 id="transfer-ticket-heading">Transfer Ticket to a Friend</h2>
+      <div class="transfer-ticket-summary"><strong id="transfer-ticket-event">Event</strong><span id="transfer-ticket-tier">General</span></div>
+      <form id="transfer-ticket-form">
+        <input type="hidden" name="ticket_id">
+        <label for="transfer-recipient-identifier">FRIEND'S EMAIL OR PHONE NUMBER</label>
+        <input id="transfer-recipient-identifier" name="recipientIdentifier" type="text" placeholder="friend@example.com or 0712345678" autocomplete="email" required>
+        <p class="transfer-ticket-warning">Transferring creates a new QR code for your friend and removes this ticket from your account. Your current QR code will no longer work.</p>
+        <p class="transfer-ticket-status" id="transfer-ticket-status" aria-live="polite" role="status"></p>
+        <a class="hub-whatsapp-button transfer-whatsapp-link" id="transfer-whatsapp-link" href="#" target="_blank" rel="noopener noreferrer" hidden>Notify them on WhatsApp</a>
+        <div class="transfer-modal-actions"><button class="transfer-cancel-button" id="transfer-ticket-cancel" type="button">Cancel</button><button class="hub-primary-button" type="submit">Transfer Ticket</button></div>
+      </form>
+    </section>
+  </div>
+
 
 </body>
 </html>

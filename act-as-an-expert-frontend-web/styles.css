@@ -876,6 +876,36 @@ body.mpesa-modal-open { overflow: hidden; }
 @media (max-width: 760px) { .user-hub-panel { padding: 18px; } .user-hub-panel-heading { align-items: flex-start; flex-direction: column; } .hub-panel-note { font-size: 10px; } .saved-events-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 600px) { .user-hub-tabs { margin-top: 22px; } .user-hub-tab { min-height: 39px; padding: 0 11px; font-size: 10px; } .user-hub-tab b { min-width: 17px; height: 17px; font-size: 8px; } .user-profile-form { grid-template-columns: 1fr; padding: 14px; } .user-profile-form .profile-form-status, .user-profile-form .hub-primary-button { grid-column: auto; } .hub-table-wrap { display: none; } .user-orders-mobile { display: grid; } .saved-events-grid { grid-template-columns: 1fr; } .saved-event-image { height: 195px; } .hub-ticket-actions { justify-content: stretch; padding-right: 10px; padding-left: 10px; } .hub-ticket-actions > * { flex: 1 1 auto; } .hub-ticket-actions .user-ticket-download { min-height: 36px; } .gate-mode-modal { padding: 65px 15px 20px; } .gate-mode-qr { width: min(80vw, 300px); height: min(80vw, 300px); } }
 @media (max-width: 480px) { .modal-overlay { padding: 14px; } .mpesa-modal-card { width: 100%; padding: 27px 20px 22px; border-radius: 14px; } .mpesa-title-row h2, .mpesa-step > h2 { font-size: 22px; } }
+/* Ticket Transfer and WhatsApp Sharing */
+.hub-transfer-button, .hub-whatsapp-button { display: inline-flex; min-height: 36px; align-items: center; justify-content: center; padding: 0 13px; border: 1px solid #e8e3e1; border-radius: 7px; background: #fff; color: #514b49; font: 800 10px 'DM Sans', sans-serif; text-decoration: none; cursor: pointer; transition: border-color .18s ease, color .18s ease, background .18s ease; }
+.hub-transfer-button:hover { border-color: #e60000; background: #fff5f5; color: #d90000; }
+.hub-whatsapp-button { border-color: #25a75a; background: #25a75a; color: #fff; }
+.hub-whatsapp-button:hover { border-color: #168344; background: #168344; color: #fff; }
+.hub-whatsapp-button[hidden] { display: none !important; }
+.transfer-ticket-modal { position: fixed; z-index: 5100; inset: 0; display: grid; place-items: center; overflow-y: auto; padding: 20px; background: rgba(17, 17, 17, .68); backdrop-filter: blur(5px); }
+.transfer-ticket-modal[hidden] { display: none !important; }
+.transfer-ticket-card { position: relative; width: min(100%, 480px); padding: 34px; border: 1px solid #ece8e6; border-radius: 16px; background: #fff; box-shadow: 0 25px 80px rgba(0,0,0,.25); }
+.transfer-ticket-close { position: absolute; top: 12px; right: 14px; display: grid; width: 36px; height: 36px; place-items: center; border: 0; border-radius: 50%; background: #f6f3f2; color: #494240; font-size: 25px; cursor: pointer; }
+.transfer-ticket-card h2 { max-width: 340px; margin: 6px 0 18px; color: #171313; font: 800 26px/1.15 'Manrope', sans-serif; letter-spacing: -.7px; }
+.transfer-ticket-summary { display: flex; flex-direction: column; gap: 6px; margin-bottom: 20px; padding: 15px; border: 1px solid #f0e8e6; border-radius: 9px; background: #fff9f8; }
+.transfer-ticket-summary strong { color: #26201e; font-size: 14px; }
+.transfer-ticket-summary span { color: #d90000; font-size: 11px; font-weight: 800; }
+#transfer-ticket-form { display: grid; gap: 9px; }
+#transfer-ticket-form label { color: #827a77; font-size: 9px; font-weight: 800; letter-spacing: .8px; }
+#transfer-ticket-form input:not([type="hidden"]) { min-height: 46px; padding: 0 12px; border: 1px solid #e7e1df; border-radius: 7px; outline: 0; background: #fff; color: #211d1b; font: 500 12px 'DM Sans', sans-serif; }
+#transfer-ticket-form input:focus { border-color: #e60000; box-shadow: 0 0 0 3px #e6000014; }
+.transfer-ticket-warning { margin: 4px 0 0; padding: 12px; border-left: 3px solid #dfa633; border-radius: 4px; background: #fff8e9; color: #755e32; font-size: 11px; line-height: 1.55; }
+.transfer-ticket-status { min-height: 18px; margin: 4px 0 0; color: #756e6c; font-size: 11px; line-height: 1.5; }
+.transfer-ticket-status.is-success { color: #168344; font-weight: 800; }
+.transfer-ticket-status.is-error { color: #b42318; font-weight: 700; }
+.transfer-ticket-status.is-info { color: #756e6c; }
+.transfer-whatsapp-link { justify-self: start; padding: 0 14px; }
+.transfer-modal-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 7px; }
+.transfer-modal-actions[hidden] { display: none !important; }
+.transfer-cancel-button { min-height: 42px; padding: 0 16px; border: 1px solid #e8e3e1; border-radius: 7px; background: #fff; color: #625b58; font: 700 11px 'DM Sans', sans-serif; cursor: pointer; }
+body.transfer-modal-open { overflow: hidden; }
+@media (max-width: 600px) { .transfer-ticket-modal { align-items: end; padding: 10px; } .transfer-ticket-card { padding: 29px 20px 22px; border-radius: 16px 16px 10px 10px; } .transfer-ticket-card h2 { font-size: 23px; } .hub-ticket-actions .hub-transfer-button, .hub-ticket-actions .hub-whatsapp-button { flex: 1 1 calc(50% - 8px); min-height: 40px; } }
+
 /* Event Details API Loading and Error States */
 .event-detail-status { max-width: 1170px; margin: 24px auto; padding: 16px 19px; border: 1px solid #e8e4e2; border-radius: 9px; background: #fff; color: #625b58; font-size: 13px; }
 .event-detail-status.is-error { border-color: #f1cccc; background: #fff5f5; color: #a42323; }

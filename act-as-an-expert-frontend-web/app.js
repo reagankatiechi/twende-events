@@ -2083,6 +2083,9 @@ async function deleteUser(userId) {
       const status = String(ticket.ticket_status || ticket.status || 'valid').toLowerCase();
       const poster = resolveHubPoster(ticket.poster_url);
       const directions = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${venue} ${location}`)}`;
+      const transferActions = status === 'valid'
+        ? `<button class="hub-transfer-button" type="button" data-transfer-ticket="${escapeHub(ticket.ticket_id)}">Transfer Ticket</button><button class="hub-whatsapp-button" type="button" data-share-ticket="${escapeHub(code)}">Share on WhatsApp</button>`
+        : '';
       return `<article class="user-digital-ticket hub-digital-ticket" id="${escapeHub(cardId)}" data-ticket-card="${escapeHub(code)}">
         <div class="user-digital-ticket-main">
           <div class="user-ticket-poster-wrap">${poster ? `<img class="user-ticket-poster" crossorigin="anonymous" src="${escapeHub(poster)}" alt="${escapeHub(title)} poster" loading="lazy">` : ''}<span class="user-ticket-poster-fallback" ${poster ? 'hidden' : ''}>TWENDE<br>EVENT</span></div>
@@ -2094,7 +2097,7 @@ async function deleteUser(userId) {
           </div>
         </div>
         <div class="user-ticket-qr-panel"><div id="qr-${escapeHub(code)}" class="user-ticket-qr"></div><small>SCAN AT THE GATE</small></div>
-        <div class="hub-ticket-actions" data-html2canvas-ignore="true"><button class="hub-gate-button" type="button" data-gate-ticket="${escapeHub(code)}">Show at Gate</button><a class="hub-directions-button" href="${escapeHub(directions)}" target="_blank" rel="noopener noreferrer">Get Directions</a><button class="user-ticket-download" type="button" data-download-ticket="${escapeHub(code)}">Download Ticket</button></div>
+        <div class="hub-ticket-actions" data-html2canvas-ignore="true"><button class="hub-gate-button" type="button" data-gate-ticket="${escapeHub(code)}">Show at Gate</button><a class="hub-directions-button" href="${escapeHub(directions)}" target="_blank" rel="noopener noreferrer">Get Directions</a><button class="user-ticket-download" type="button" data-download-ticket="${escapeHub(code)}">Download Ticket</button>${transferActions}</div>
       </article>`;
     }).join('');
     rows.forEach((ticket) => makeQr(document.querySelector(`#qr-${CSS.escape(String(ticket.ticket_code || 'TICKET'))}`), ticket));
@@ -2221,6 +2224,94 @@ async function deleteUser(userId) {
   document.querySelector('#gate-mode-close-cta').addEventListener('click', closeGate);
   gateModal.addEventListener('click', (event) => { if (event.target === gateModal) closeGate(); });
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !gateModal.hidden) closeGate(); });
+
+  const transferModal = document.querySelector('#transfer-ticket-modal');
+  const transferForm = document.querySelector('#transfer-ticket-form');
+  const closeTransferModal = () => {
+    transferModal.hidden = true;
+    document.body.classList.remove('transfer-modal-open');
+    transferForm.reset();
+    document.querySelector('#transfer-ticket-status').textContent = '';
+    document.querySelector('#transfer-ticket-status').className = 'transfer-ticket-status';
+    document.querySelector('#transfer-whatsapp-link').hidden = true;
+    transferForm.querySelector('.transfer-modal-actions').hidden = false;
+    transferForm.querySelector('[type="submit"]').disabled = false;
+  };
+  document.querySelector('#transfer-ticket-close').addEventListener('click', closeTransferModal);
+  document.querySelector('#transfer-ticket-cancel').addEventListener('click', closeTransferModal);
+  transferModal.addEventListener('click', (event) => { if (event.target === transferModal) closeTransferModal(); });
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !transferModal.hidden) closeTransferModal(); });
+
+  document.addEventListener('click', (event) => {
+    const transferButton = event.target.closest('[data-transfer-ticket]');
+    if (transferButton) {
+      const ticket = tickets.find((item) => String(item.ticket_id) === transferButton.dataset.transferTicket);
+      if (!ticket) return;
+      transferForm.elements.ticket_id.value = ticket.ticket_id;
+      document.querySelector('#transfer-ticket-event').textContent = ticket.event_title || 'Event ticket';
+      document.querySelector('#transfer-ticket-tier').textContent = ticket.tier_name || 'General';
+      transferModal.hidden = false;
+      document.body.classList.add('transfer-modal-open');
+      document.querySelector('#transfer-recipient-identifier').focus();
+      return;
+    }
+
+    const shareButton = event.target.closest('[data-share-ticket]');
+    if (shareButton) {
+      const ticket = tickets.find((item) => String(item.ticket_code) === shareButton.dataset.shareTicket);
+      if (!ticket) return;
+      const eventDate = formatHubDate(getTicketDate(ticket), { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+      const detailsUrl = `https://twende-events.onrender.com/event-details.html?id=${encodeURIComponent(ticket.event_id || '')}`;
+      const message = [
+        `I'm going to ${ticket.event_title || 'a Twende Events event'}!`,
+        `Date & time: ${eventDate}`,
+        `Venue: ${ticket.venue || 'Venue TBA'}${ticket.location ? `, ${ticket.location}` : ''}`,
+        `Ticket tier: ${ticket.tier_name || 'General'}`,
+        `Ticket code: ${ticket.ticket_code}`,
+        `Event details: ${detailsUrl}`
+      ].join('\n');
+      window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank', 'noopener,noreferrer');
+    }
+  });
+
+  transferForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!transferForm.reportValidity()) return;
+    const ticketId = transferForm.elements.ticket_id.value;
+    const recipientIdentifier = transferForm.elements.recipientIdentifier.value.trim();
+    const submitButton = transferForm.querySelector('[type="submit"]');
+    const statusElement = document.querySelector('#transfer-ticket-status');
+    const whatsappLink = document.querySelector('#transfer-whatsapp-link');
+    submitButton.disabled = true;
+    statusElement.textContent = 'Transferring ticket…';
+    statusElement.className = 'transfer-ticket-status is-info';
+    whatsappLink.hidden = true;
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/tickets/${encodeURIComponent(ticketId)}/transfer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.token}` },
+        body: JSON.stringify({ recipientIdentifier })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Ticket transfer could not be completed.');
+      const ticket = tickets.find((item) => String(item.ticket_id) === String(ticketId));
+      const detailsUrl = `https://twende-events.onrender.com/event-details.html?id=${encodeURIComponent(ticket?.event_id || '')}`;
+      const message = `I transferred my ${ticket?.tier_name || 'General'} ticket for ${ticket?.event_title || 'this event'} to you. Sign in to Twende Events to find your new QR ticket: ${detailsUrl}`;
+      statusElement.textContent = data.message || `Ticket transferred successfully to ${data.recipientName || 'your friend'}.`;
+      statusElement.className = 'transfer-ticket-status is-success';
+      whatsappLink.href = `https://wa.me/?text=${encodeURIComponent(message)}`;
+      whatsappLink.hidden = false;
+      transferForm.querySelector('.transfer-modal-actions').hidden = true;
+      await loadDashboard();
+      window.setTimeout(() => {
+        if (!transferModal.hidden) closeTransferModal();
+      }, 5000);
+    } catch (error) {
+      statusElement.textContent = error.message;
+      statusElement.className = 'transfer-ticket-status is-error';
+      submitButton.disabled = false;
+    }
+  });
 
   document.addEventListener('click', async (event) => {
     const gateButton = event.target.closest('[data-gate-ticket]');
