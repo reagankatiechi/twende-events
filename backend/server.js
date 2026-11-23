@@ -1182,7 +1182,7 @@ app.post('/api/login', async (req, res) => {
 
         // Check if the identifier matches either a phone number or an email
         const [users] = await pool.query(
-            `SELECT user_id, full_name, email, phone_number, role 
+            `SELECT user_id, full_name, email, phone_number, role, created_at 
              FROM Users 
              WHERE (phone_number = ? OR email = ?) AND password_hash = ?`,
             [identifier, identifier, password]
