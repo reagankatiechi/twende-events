@@ -1595,7 +1595,7 @@ async function deleteEvent(eventId) {
 
       totalEventsEl.textContent = events.length.toLocaleString('en-KE');
       if (events.length === 0) {
-        eventsListEl.innerHTML = '<tr><td class="admin-table-message" colspan="6">No approved events are currently published.</td></tr>';
+        eventsListEl.innerHTML = '<tr><td class="admin-table-message" colspan="7">No approved events are currently published.</td></tr>';
         return;
       }
 
@@ -2223,6 +2223,7 @@ async function deleteUser(userId) {
         <td><strong>${escapeUserValue(user.full_name || 'Name unavailable')}</strong></td>
         <td>${escapeUserValue(user.email || '—')}</td>
         <td>${escapeUserValue(user.phone_number || '—')}</td>
+        <td>${user.created_at && !Number.isNaN(new Date(user.created_at).getTime()) ? escapeUserValue(new Date(user.created_at).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) + ' · ' + new Date(user.created_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })) : 'Before tracking'}</td>
         <td><span class="admin-status-badge admin-role-badge">${escapeUserValue(user.role || 'user')}</span></td>
         <td><button class="admin-delete-event" type="button" data-user-id="${escapeUserValue(user.user_id ?? user.id ?? '')}" onclick="deleteUser(this.dataset.userId)">Delete</button></td>
       </tr>`).join('');
