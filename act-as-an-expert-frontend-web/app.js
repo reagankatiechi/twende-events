@@ -1780,6 +1780,45 @@ async function deleteEvent(eventId) {
   else window.addEventListener('twende:admin-unlocked', loadAnalytics, { once: true });
 })();
 
+// Public contact form submission.
+(() => {
+  const form = document.querySelector('#contact-inquiry-form');
+  if (!form) return;
+  const feedback = document.querySelector('#contact-form-status');
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!form.reportValidity()) {
+      feedback.textContent = 'Please complete your name, email, topic, and message.';
+      feedback.className = 'contact-form-status is-error';
+      return;
+    }
+    const submit = form.querySelector('[type="submit"]');
+    submit.disabled = true;
+    feedback.textContent = 'Sending your note…';
+    feedback.className = 'contact-form-status is-info';
+    const payload = {
+      full_name: form.elements.name.value.trim(),
+      email: form.elements.email.value.trim(),
+      topic: form.elements.topic.value.trim(),
+      order_reference: form.elements.order_reference.value.trim(),
+      message: form.elements.message.value.trim()
+    };
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/contact`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || data.message || 'Your note could not be sent. Please try again.');
+      form.reset();
+      feedback.textContent = 'Thanks! Your note has been sent to the Twende Events team.';
+      feedback.className = 'contact-form-status is-success';
+    } catch (error) {
+      feedback.textContent = error.message || 'Your note could not be sent. Please try again.';
+      feedback.className = 'contact-form-status is-error';
+    } finally { submit.disabled = false; }
+  });
+})();
+
 // Tabbed admin command center: event/tier maintenance and PayHero reconciliation.
 (() => {
   const root = document.querySelector('.admin-dashboard-page');
@@ -1791,8 +1830,13 @@ async function deleteEvent(eventId) {
 
   let events = [];
   let orders = [];
+  let supportMessages = [];
   let orderFilter = 'all';
+  let supportFilter = 'all';
   let selectedTierEventId = null;
+  const ordersSearch = document.querySelector('#admin-orders-search');
+  const supportList = document.querySelector('#support-inquiry-list');
+  const supportSearch = document.querySelector('#support-search');
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
   const dateLabel = (value) => {
     if (!value) return 'Date to be announced';
@@ -1822,11 +1866,12 @@ async function deleteEvent(eventId) {
       tab.setAttribute('aria-selected', String(active));
     });
     tabPanels.forEach((panel) => { panel.hidden = panel.dataset.adminPanel !== name; });
-    const headings = { analytics: 'Sales & Analytics', events: 'Events & Ticket Tiers', orders: 'M-Pesa Reconciliation', create: 'Create / Approve Events' };
+    const headings = { analytics: 'Sales & Analytics', events: 'Events & Ticket Tiers', orders: 'M-Pesa Reconciliation', support: 'Support Inquiries', create: 'Create / Approve Events' };
     const heading = document.querySelector('.admin-top-header h1');
     if (heading) heading.textContent = headings[name] || 'Admin Command Center';
     if (name === 'events') loadEvents();
     if (name === 'orders') loadOrders();
+    if (name === 'support') loadSupportMessages();
   }));
   document.querySelector('.admin-nav-link[href="#recent-events"]')?.addEventListener('click', (event) => {
     event.preventDefault();
@@ -1970,9 +2015,12 @@ async function deleteEvent(eventId) {
   });
 
   const renderOrders = () => {
-    const visible = orderFilter === 'all' ? orders : orders.filter((order) => {
+    const query = String(ordersSearch?.value || '').trim().toLowerCase();
+    const visible = orders.filter((order) => {
       const status = String(order.payment_status || '').toLowerCase();
-      return orderFilter === 'paid' ? ['paid', 'completed'].includes(status) : status === orderFilter;
+      const matchesStatus = orderFilter === 'all' || (orderFilter === 'paid' ? ['paid', 'completed'].includes(status) : status === orderFilter);
+      const searchText = [order.order_id, order.attendee_name, order.phone_number, order.event_title, order.tier_name, order.external_reference, order.payhero_reference, order.mpesa_receipt_number].join(' ').toLowerCase();
+      return matchesStatus && (!query || searchText.includes(query));
     });
     if (!visible.length) {
       ordersBody.innerHTML = '<tr><td class="admin-table-message" colspan="8">No orders match this filter.</td></tr>';
@@ -2004,6 +2052,7 @@ async function deleteEvent(eventId) {
     document.querySelectorAll('[data-order-status]').forEach((pill) => { const active = pill === button; pill.classList.toggle('is-active', active); pill.setAttribute('aria-pressed', String(active)); });
     renderOrders();
   }));
+  ordersSearch?.addEventListener('input', renderOrders);
   document.querySelector('#reconcile-all-orders').addEventListener('click', async (event) => {
     const button = event.currentTarget; button.disabled = true;
     const feedback = document.querySelector('#reconciliation-feedback'); feedback.textContent = 'Checking pending orders with PayHero…';
@@ -2039,10 +2088,97 @@ async function deleteEvent(eventId) {
     } catch (error) { window.alert(error.message); checkButton.disabled = false; }
   });
 
+  const renderSupportMessages = () => {
+    if (!supportList) return;
+    const query = String(supportSearch?.value || '').trim().toLowerCase();
+    const visible = supportMessages.filter((message) => {
+      const status = String(message.status || 'unread').toLowerCase();
+      const text = [message.full_name, message.email, message.topic, message.order_reference, message.message].join(' ').toLowerCase();
+      return (supportFilter === 'all' || status === supportFilter) && (!query || text.includes(query));
+    });
+    if (!visible.length) {
+      supportList.innerHTML = `<div class="support-empty-state">${supportMessages.length ? 'No inquiries match your filters.' : 'No support inquiries yet.'}</div>`;
+      return;
+    }
+    supportList.innerHTML = visible.map((item) => {
+      const isUnread = String(item.status || 'unread').toLowerCase() === 'unread';
+      const subject = encodeURIComponent(`Re: Twende Events Support - ${item.topic || 'Inquiry'}`);
+      const checkOrder = item.order_reference
+        ? `<button class="admin-row-button is-secondary" type="button" data-check-order-reference="${esc(item.order_reference)}">Check Order</button>` : '';
+      return `<article class="support-inquiry-card ${isUnread ? 'is-unread' : ''}">
+        <header class="support-inquiry-header"><div><h3>${esc(item.full_name)}</h3><a href="mailto:${esc(item.email)}">${esc(item.email)}</a></div><span class="support-status-badge ${isUnread ? 'is-unread' : 'is-resolved'}">${isUnread ? 'Unread' : 'Resolved'}</span></header>
+        <div class="support-inquiry-meta">${item.topic ? `<span class="support-topic-badge">${esc(item.topic)}</span>` : ''}${item.order_reference ? `<span class="support-reference-badge">Order: ${esc(item.order_reference)}</span>` : ''}<time datetime="${esc(item.created_at || '')}">${dateLabel(item.created_at)}</time></div>
+        <p class="support-message-body">${esc(item.message)}</p>
+        <footer class="support-inquiry-actions"><a class="admin-row-button support-reply-button" href="mailto:${esc(item.email)}?subject=${subject}">Reply via Email</a>${checkOrder}<button class="admin-row-button is-secondary" type="button" data-toggle-inquiry-status="${esc(item.message_id)}" data-next-status="${isUnread ? 'resolved' : 'unread'}">${isUnread ? 'Mark Resolved' : 'Reopen'}</button><button class="admin-row-button is-warning" type="button" data-delete-inquiry="${esc(item.message_id)}">Delete</button></footer>
+      </article>`;
+    }).join('');
+  };
+
+  async function loadSupportMessages() {
+    const feedback = document.querySelector('#support-inbox-feedback');
+    if (!feedback || !supportList) return;
+    feedback.textContent = 'Loading support inquiries…';
+    try {
+      const data = await getJson(`${API_BASE_URL}/api/admin/messages`);
+      supportMessages = Array.isArray(data.messages) ? data.messages : [];
+      document.querySelector('#support-unread-count').textContent = String(Number(data.unreadCount || 0));
+      document.querySelector('#support-unread-count').hidden = Number(data.unreadCount || 0) === 0;
+      renderSupportMessages();
+      feedback.textContent = `${supportMessages.length} inquiries · ${Number(data.unreadCount || 0)} unread`;
+    } catch (error) {
+      console.error('Unable to load support inquiries:', error);
+      feedback.textContent = error.message || 'Support inquiries could not be loaded.';
+      supportList.innerHTML = '<div class="support-empty-state is-error">Support inquiries could not be loaded. Please refresh.</div>';
+    }
+  }
+  document.querySelector('#support-refresh')?.addEventListener('click', loadSupportMessages);
+  supportSearch?.addEventListener('input', renderSupportMessages);
+  document.querySelectorAll('[data-support-filter]').forEach((button) => button.addEventListener('click', () => {
+    supportFilter = button.dataset.supportFilter;
+    document.querySelectorAll('[data-support-filter]').forEach((pill) => { const active = pill === button; pill.classList.toggle('is-active', active); pill.setAttribute('aria-pressed', String(active)); });
+    renderSupportMessages();
+  }));
+  supportList?.addEventListener('click', async (event) => {
+    const checkOrderButton = event.target.closest('[data-check-order-reference]');
+    if (checkOrderButton) {
+      const reference = checkOrderButton.dataset.checkOrderReference;
+      const ordersTab = document.querySelector('[data-admin-tab="orders"]');
+      ordersTab?.click();
+      if (ordersSearch) ordersSearch.value = reference;
+      orderFilter = 'all';
+      document.querySelectorAll('[data-order-status]').forEach((pill) => { const active = pill.dataset.orderStatus === 'all'; pill.classList.toggle('is-active', active); pill.setAttribute('aria-pressed', String(active)); });
+      await loadOrders();
+      renderOrders();
+      return;
+    }
+
+    const statusButton = event.target.closest('[data-toggle-inquiry-status]');
+    const deleteButton = event.target.closest('[data-delete-inquiry]');
+    if (deleteButton) {
+      if (!window.confirm('Delete this support inquiry? This cannot be undone.')) return;
+      deleteButton.disabled = true;
+      try {
+        await getJson(`${API_BASE_URL}/api/admin/messages/${encodeURIComponent(deleteButton.dataset.deleteInquiry)}`, { method: 'DELETE' });
+        await loadSupportMessages();
+      } catch (error) { window.alert(error.message); deleteButton.disabled = false; }
+      return;
+    }
+    if (statusButton) {
+      statusButton.disabled = true;
+      try {
+        await getJson(`${API_BASE_URL}/api/admin/messages/${encodeURIComponent(statusButton.dataset.toggleInquiryStatus)}/status`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: statusButton.dataset.nextStatus })
+        });
+        await loadSupportMessages();
+      } catch (error) { window.alert(error.message); statusButton.disabled = false; }
+    }
+  });
+
   const initializeAdminWorkspace = () => {
     if (!window.adminAccessReady) return;
     if (document.querySelector('[data-admin-panel="events"]:not([hidden])')) loadEvents();
     if (document.querySelector('[data-admin-panel="orders"]:not([hidden])')) loadOrders();
+    loadSupportMessages();
   };
   if (window.adminAccessReady) initializeAdminWorkspace();
   else window.addEventListener('twende:admin-unlocked', initializeAdminWorkspace);

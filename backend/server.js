@@ -179,6 +179,18 @@ async function ensurePaymentSchema() {
                 UNIQUE KEY unique_user_event (user_id, event_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         `);
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS Contact_Messages (
+                message_id INT AUTO_INCREMENT PRIMARY KEY,
+                full_name VARCHAR(150) NOT NULL,
+                email VARCHAR(180) NOT NULL,
+                topic VARCHAR(120) NULL,
+                order_reference VARCHAR(120) NULL,
+                message TEXT NOT NULL,
+                status VARCHAR(32) NOT NULL DEFAULT 'unread',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        `);
     } finally {
         connection.release();
     }
@@ -258,6 +270,80 @@ app.post('/api/admin/verify-passcode', (req, res) => {
 
 // All admin API routes require a verified passcode token (x-admin-token or Bearer).
 app.use('/api/admin', requireAdminAccess);
+
+app.post('/api/contact', async (req, res) => {
+    const fullName = String(req.body?.full_name ?? req.body?.name ?? '').trim();
+    const email = String(req.body?.email || '').trim();
+    const topic = String(req.body?.topic || '').trim();
+    const orderReference = String(req.body?.order_reference ?? req.body?.orderReference ?? '').trim();
+    const message = String(req.body?.message || '').trim();
+    if (!fullName || !email || !message) {
+        return res.status(400).json({ error: 'Name, email, and message are required.' });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return res.status(400).json({ error: 'Enter a valid email address.' });
+    }
+    try {
+        await pool.query(
+            `INSERT INTO Contact_Messages (full_name, email, topic, order_reference, message)
+             VALUES (?, ?, ?, ?, ?)`,
+            [fullName.slice(0, 150), email.slice(0, 180), topic ? topic.slice(0, 120) : null,
+                orderReference ? orderReference.slice(0, 120) : null, message]
+        );
+        return res.status(201).json({ success: true, message: 'Your note has been received. Our team will get back to you shortly.' });
+    } catch (error) {
+        console.error('Error saving contact inquiry:', error);
+        return res.status(500).json({ error: 'Your message could not be sent right now. Please try again.' });
+    }
+});
+
+app.get('/api/admin/messages', async (req, res) => {
+    try {
+        const [messages] = await pool.query(
+            `SELECT message_id, full_name, email, topic, order_reference, message, status, created_at
+             FROM Contact_Messages
+             ORDER BY CASE WHEN status = 'unread' THEN 0 ELSE 1 END, created_at DESC, message_id DESC`
+        );
+        const [[countRow]] = await pool.query(
+            `SELECT COUNT(*) AS unreadCount FROM Contact_Messages WHERE status = 'unread'`
+        );
+        return res.status(200).json({ messages, unreadCount: Number(countRow?.unreadCount || 0) });
+    } catch (error) {
+        console.error('Error loading admin contact messages:', error);
+        return res.status(500).json({ error: 'Could not load support inquiries.' });
+    }
+});
+
+app.patch('/api/admin/messages/:messageId/status', async (req, res) => {
+    const messageId = Number(req.params.messageId);
+    const status = String(req.body?.status || '').trim().toLowerCase();
+    if (!Number.isSafeInteger(messageId) || messageId < 1) return res.status(400).json({ error: 'Invalid message ID.' });
+    if (!['unread', 'resolved'].includes(status)) return res.status(400).json({ error: 'Status must be unread or resolved.' });
+    try {
+        const [result] = await pool.query(`UPDATE Contact_Messages SET status = ? WHERE message_id = ?`, [status, messageId]);
+        if (!result.affectedRows) {
+            const [rows] = await pool.query(`SELECT message_id FROM Contact_Messages WHERE message_id = ? LIMIT 1`, [messageId]);
+            if (!rows.length) return res.status(404).json({ error: 'Inquiry not found.' });
+        }
+        return res.status(200).json({ success: true });
+    } catch (error) {
+        console.error(`Error updating contact inquiry ${messageId}:`, error);
+        return res.status(500).json({ error: 'Could not update inquiry status.' });
+    }
+});
+
+app.delete('/api/admin/messages/:messageId', async (req, res) => {
+    const messageId = Number(req.params.messageId);
+    if (!Number.isSafeInteger(messageId) || messageId < 1) return res.status(400).json({ error: 'Invalid message ID.' });
+    try {
+        const [result] = await pool.query(`DELETE FROM Contact_Messages WHERE message_id = ?`, [messageId]);
+        if (!result.affectedRows) return res.status(404).json({ error: 'Inquiry not found.' });
+        return res.status(200).json({ success: true });
+    } catch (error) {
+        console.error(`Error deleting contact inquiry ${messageId}:`, error);
+        return res.status(500).json({ error: 'Could not delete inquiry.' });
+    }
+});
 
 // Protected reporting data for the passcode-unlocked admin dashboard.
 app.get('/api/admin/analytics', async (req, res) => {

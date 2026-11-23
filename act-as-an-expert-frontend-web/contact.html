@@ -68,13 +68,14 @@
             <div><dt>BASE</dt><dd>Kisii County, Kenya</dd></div>
           </dl>
         </div>
-        <form class="note-form" action="#" method="get">
+        <form class="note-form" id="contact-inquiry-form" action="#" method="post">
           <div class="form-field"><label for="note-name">NAME</label><input id="note-name" name="name" type="text" placeholder="Amina Wanjiru" autocomplete="name" required></div>
           <div class="form-field"><label for="note-email">EMAIL</label><input id="note-email" name="email" type="email" placeholder="you@example.com" autocomplete="email" required></div>
           <div class="form-field"><label for="note-topic">TOPIC</label><select id="note-topic" name="topic" required><option value="" selected disabled>Choose one</option><option>Ticket or payment support</option><option>Event organizer onboarding</option><option>Partnerships</option><option>Something else</option></select></div>
-          <div class="form-field"><label for="note-reference">ORDER REFERENCE</label><input id="note-reference" name="reference" type="text" placeholder="S00181"></div>
+          <div class="form-field"><label for="note-reference">ORDER REFERENCE</label><input id="note-reference" name="order_reference" type="text" placeholder="S00181"></div>
           <div class="form-field form-message"><label for="note-message">MESSAGE</label><textarea id="note-message" name="message" rows="5" placeholder="Tell us what happened or what you want to launch." required></textarea></div>
           <div class="turnstile-mock" aria-label="Captcha mockup: Success"><span class="turnstile-check" aria-hidden="true">✓</span><span class="turnstile-success">Success!</span><span class="cloudflare-mark" aria-hidden="true">◒</span><span class="cloudflare-wordmark">CLOUDFLARE</span></div>
+          <p class="contact-form-status" id="contact-form-status" role="status" aria-live="polite"></p>
           <button class="note-submit" type="submit">Send your note <span aria-hidden="true">→</span></button>
         </form>
       </div>

@@ -1202,3 +1202,41 @@ body.review-modal-open { overflow: hidden; }
 body.admin-modal-open { overflow: hidden; }
 @media (max-width: 760px) { .admin-tab-bar { margin-bottom: 19px; } .admin-tab { padding: 0 12px; font-size: 10px; } .reconciliation-heading { align-items: flex-start !important; } .admin-workflow-links { grid-template-columns: 1fr; } }
 @media (max-width: 560px) { .admin-edit-form, .admin-tiers-dialog { padding: 25px 18px 20px; } .admin-form-two-col { grid-template-columns: 1fr; gap: 0; } .admin-create-approve-panel { padding: 21px 17px; } .admin-order-filters { padding-right: 15px; padding-left: 15px; } .admin-manage-events-panel .admin-section-heading, .admin-orders-panel .admin-section-heading { padding: 18px 15px 12px; } .admin-tab-feedback, .reconciliation-feedback { margin-right: 15px; margin-left: 15px; } }
+
+/* Support Inquiries Inbox */
+.admin-tab-badge { display: inline-grid; min-width: 19px; height: 19px; place-items: center; margin-left: 5px; padding: 0 5px; border-radius: 999px; background: #e60000; color: #fff; font: 800 9px 'DM Sans', sans-serif; }
+.admin-tab-badge[hidden] { display: none !important; }
+.support-inbox-heading { align-items: center; padding: 20px 22px 14px; }
+.support-inbox-toolbar, .admin-order-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 0 22px 16px; }
+.support-filters { display: flex; flex-wrap: wrap; gap: 7px; }
+.support-search, .admin-order-search { position: relative; display: block; width: min(360px, 100%); }
+.support-search input, .admin-order-search input { width: 100%; min-height: 37px; padding: 0 12px; border: 1px solid #e8e4e2; border-radius: 7px; outline: 0; background: #fff; color: #302b29; font: 500 10px 'DM Sans', sans-serif; }
+.support-search input:focus, .admin-order-search input:focus { border-color: #e60000; box-shadow: 0 0 0 3px #e6000012; }
+.support-inbox-feedback { min-height: 16px; margin: 0 22px 12px; color: #8c8583; font-size: 10px; }
+.support-inquiry-list { display: grid; gap: 12px; padding: 0 22px 22px; }
+.support-inquiry-card { padding: 19px; border: 1px solid #ece8e6; border-radius: 10px; background: #fff; box-shadow: 0 4px 16px rgba(20,20,25,.025); }
+.support-inquiry-card.is-unread { border-left: 3px solid #e60000; background: linear-gradient(90deg, #fffafa 0, #fff 22%); }
+.support-inquiry-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.support-inquiry-header h3 { margin: 0 0 4px; color: #211d1c; font: 800 14px 'Manrope', sans-serif; }
+.support-inquiry-header a { color: #69615f; font-size: 10px; text-decoration: none; overflow-wrap: anywhere; }
+.support-inquiry-header a:hover { color: #d90000; text-decoration: underline; }
+.support-status-badge, .support-topic-badge, .support-reference-badge { display: inline-flex; align-items: center; width: fit-content; padding: 5px 9px; border-radius: 999px; font-size: 8px; font-weight: 800; }
+.support-status-badge.is-unread { background: #fff0ec; color: #c24125; }
+.support-status-badge.is-resolved { background: #eaf8ef; color: #23804a; }
+.support-inquiry-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-top: 13px; }
+.support-topic-badge { background: #f0f3fa; color: #53657f; }
+.support-reference-badge { background: #fff7e7; color: #8b631d; font-family: ui-monospace, Consolas, monospace; }
+.support-inquiry-meta time { margin-left: auto; color: #948c89; font-size: 9px; }
+.support-message-body { margin: 15px 0; padding: 13px 14px; border-radius: 7px; background: #f8f7f6; color: #514a48; font-size: 11px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.support-inquiry-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.support-reply-button { display: inline-flex; align-items: center; justify-content: center; padding: 0 10px; text-decoration: none; }
+.support-empty-state { padding: 35px 18px; border: 1px dashed #e4dfdd; border-radius: 9px; color: #87807e; font-size: 11px; text-align: center; }
+.support-empty-state.is-error { color: #b42318; }
+.admin-order-toolbar { align-items: flex-start; }
+.admin-order-toolbar .admin-order-filters { padding: 0; }
+.note-form .contact-form-status { grid-column: 1 / -1; min-height: 16px; margin: 0; color: #766e6b; font-size: 10px; line-height: 1.45; }
+.note-form .contact-form-status.is-success { color: #218147; font-weight: 700; }
+.note-form .contact-form-status.is-error { color: #b42318; font-weight: 700; }
+.note-form .contact-form-status.is-info { color: #766e6b; }
+@media (max-width: 760px) { .support-inbox-toolbar, .admin-order-toolbar { align-items: stretch; flex-direction: column; padding-right: 15px; padding-left: 15px; } .support-search, .admin-order-search { width: 100%; } .support-inbox-heading { align-items: flex-start; padding-right: 15px; padding-left: 15px; } .support-inbox-feedback { margin-right: 15px; margin-left: 15px; } .support-inquiry-list { padding-right: 15px; padding-left: 15px; } }
+@media (max-width: 520px) { .support-inquiry-card { padding: 15px; } .support-inquiry-meta time { width: 100%; margin-left: 0; } .support-inquiry-actions > * { flex: 1 1 calc(50% - 8px); } }

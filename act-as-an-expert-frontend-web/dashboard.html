@@ -66,6 +66,7 @@
         <button class="admin-tab is-active" type="button" role="tab" aria-selected="true" data-admin-tab="analytics">Sales &amp; Analytics</button>
         <button class="admin-tab" type="button" role="tab" aria-selected="false" data-admin-tab="events">Events &amp; Ticket Tiers</button>
         <button class="admin-tab" type="button" role="tab" aria-selected="false" data-admin-tab="orders">M-Pesa Reconciliation</button>
+        <button class="admin-tab" type="button" role="tab" aria-selected="false" data-admin-tab="support">Support Inquiries <span class="admin-tab-badge" id="support-unread-count">0</span></button>
         <button class="admin-tab" type="button" role="tab" aria-selected="false" data-admin-tab="create">Create / Approve Events</button>
       </nav>
 
@@ -181,13 +182,22 @@
         <section class="admin-panel admin-orders-panel" aria-labelledby="mpesa-reconciliation-title">
           <div class="admin-section-heading reconciliation-heading"><div><p class="admin-eyebrow">PAYMENT OPERATIONS</p><h2 id="mpesa-reconciliation-title">M-Pesa Reconciliation</h2></div><button class="analytics-export-button" id="reconcile-all-orders" type="button">Reconcile All Pending Orders</button></div>
           <p class="reconciliation-feedback" id="reconciliation-feedback" role="status" aria-live="polite"></p>
-          <div class="admin-order-filters" role="group" aria-label="Filter orders by payment status">
+          <div class="admin-order-toolbar"><div class="admin-order-filters" role="group" aria-label="Filter orders by payment status">
             <button type="button" class="admin-order-filter is-active" data-order-status="all" aria-pressed="true">All Orders</button>
             <button type="button" class="admin-order-filter" data-order-status="pending" aria-pressed="false">Pending</button>
             <button type="button" class="admin-order-filter" data-order-status="paid" aria-pressed="false">Paid</button>
             <button type="button" class="admin-order-filter" data-order-status="failed" aria-pressed="false">Failed</button>
-          </div>
+          </div><label class="admin-order-search"><span class="sr-only">Search orders</span><input id="admin-orders-search" type="search" placeholder="Search order, phone, receipt or reference"></label></div>
           <div class="admin-table-wrap"><table class="admin-events-table admin-orders-table"><thead><tr><th>Order #</th><th>Customer &amp; Phone</th><th>Event &amp; Tier</th><th>Amount (KES)</th><th>M-Pesa Receipt</th><th>Status</th><th>Created At</th><th>Actions</th></tr></thead><tbody id="admin-orders-body"><tr><td colspan="8" class="admin-table-message">Unlock the dashboard to load orders.</td></tr></tbody></table></div>
+        </section>
+      </section>
+
+      <section class="admin-tab-panel" data-admin-panel="support" role="tabpanel" hidden>
+        <section class="admin-panel support-inbox-panel" aria-labelledby="support-inbox-title">
+          <div class="admin-section-heading support-inbox-heading"><div><p class="admin-eyebrow">CUSTOMER CARE</p><h2 id="support-inbox-title">Support Inquiries</h2></div><button class="analytics-refresh-button" id="support-refresh" type="button">Refresh Inbox</button></div>
+          <div class="support-inbox-toolbar"><div class="support-filters" role="group" aria-label="Filter support inquiries"><button class="admin-order-filter is-active" type="button" data-support-filter="all" aria-pressed="true">All</button><button class="admin-order-filter" type="button" data-support-filter="unread" aria-pressed="false">Unread</button><button class="admin-order-filter" type="button" data-support-filter="resolved" aria-pressed="false">Resolved</button></div><label class="support-search"><span class="sr-only">Search inquiries</span><input id="support-search" type="search" placeholder="Search name, email, topic, order or message"></label></div>
+          <p class="support-inbox-feedback" id="support-inbox-feedback" role="status" aria-live="polite"></p>
+          <div class="support-inquiry-list" id="support-inquiry-list"><div class="support-empty-state">Unlock the dashboard to load support inquiries.</div></div>
         </section>
       </section>
 
