@@ -80,7 +80,7 @@ async function ensurePaymentSchema() {
     const connection = await pool.getConnection();
     try {
         const tableColumns = new Map();
-        for (const tableName of ['Orders', 'Purchased_Tickets', 'Ticket_Tiers']) {
+        for (const tableName of ['Orders', 'Purchased_Tickets', 'Ticket_Tiers', 'Users']) {
             const [columns] = await connection.query(
                 `SELECT COLUMN_NAME, IS_NULLABLE, COLUMN_KEY
                  FROM INFORMATION_SCHEMA.COLUMNS

@@ -1,0 +1,26 @@
+[1mdiff --git a/act-as-an-expert-frontend-web/admin-users.html b/act-as-an-expert-frontend-web/admin-users.html[m
+[1mindex 9d676af..926cb20 100644[m
+[1m--- a/act-as-an-expert-frontend-web/admin-users.html[m
+[1m+++ b/act-as-an-expert-frontend-web/admin-users.html[m
+[36m@@ -76,7 +76,7 @@[m
+               </tr>[m
+             </thead>[m
+             <tbody id="users-table-body" aria-live="polite">[m
+[31m-              <tr><td class="admin-table-message" colspan="6">Loading registered users…</td></tr>[m
+[32m+[m[32m              <tr><td class="admin-table-message" colspan="7">Loading registered users…</td></tr>[m
+             </tbody>[m
+           </table>[m
+         </div>[m
+[1mdiff --git a/backend/server.js b/backend/server.js[m
+[1mindex ae018ad..a1afc19 100644[m
+[1m--- a/backend/server.js[m
+[1m+++ b/backend/server.js[m
+[36m@@ -80,7 +80,7 @@[m [masync function ensurePaymentSchema() {[m
+     const connection = await pool.getConnection();[m
+     try {[m
+         const tableColumns = new Map();[m
+[31m-        for (const tableName of ['Orders', 'Purchased_Tickets', 'Ticket_Tiers']) {[m
+[32m+[m[32m        for (const tableName of ['Orders', 'Purchased_Tickets', 'Ticket_Tiers', 'Users']) {[m
+             const [columns] = await connection.query([m
+                 `SELECT COLUMN_NAME, IS_NULLABLE, COLUMN_KEY[m
+                  FROM INFORMATION_SCHEMA.COLUMNS[m
