@@ -1708,7 +1708,7 @@ app.get('/api/admin/users', async (req, res) => {
     try {
         // Fetch users, explicitly excluding the password_hash for security
         const [users] = await pool.query(
-            `SELECT user_id, full_name, email, phone_number, role 
+            `SELECT user_id, full_name, email, phone_number, role, created_at 
              FROM Users 
              ORDER BY user_id DESC`
         );
