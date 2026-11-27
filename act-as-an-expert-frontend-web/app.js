@@ -1819,14 +1819,173 @@ async function deleteEvent(eventId) {
   });
 })();
 
-// Tabbed admin command center: event/tier maintenance and PayHero reconciliation.
+// Responsive admin drawer is shared by the dashboard and users directory.
+(() => {
+  const shell = document.querySelector('.admin-shell');
+  const backdrop = document.querySelector('[data-admin-sidebar-close]');
+  const toggle = document.querySelector('[data-admin-sidebar-toggle]');
+  if (!shell || !backdrop || !toggle) return;
+  const close = () => {
+    shell.classList.remove('is-sidebar-open');
+    document.body.classList.remove('admin-sidebar-open');
+    backdrop.hidden = true;
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.setAttribute('aria-label', 'Open navigation');
+  };
+  toggle.addEventListener('click', () => {
+    const open = !shell.classList.contains('is-sidebar-open');
+    shell.classList.toggle('is-sidebar-open', open);
+    document.body.classList.toggle('admin-sidebar-open', open);
+    backdrop.hidden = !open;
+    toggle.setAttribute('aria-expanded', String(open));
+    toggle.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
+    if (open) shell.querySelector('.admin-sidebar .admin-nav-link')?.focus();
+  });
+  backdrop.addEventListener('click', close);
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape') close(); });
+})();
+
+// Pending event moderation is part of the same passcode-protected admin workspace.
+(() => {
+  const pendingBody = document.querySelector('#pending-events-table-body');
+  const approvalView = document.querySelector('[data-admin-panel="approvals"]');
+  if (!pendingBody || !approvalView) return;
+
+  let pendingEventsData = [];
+  const reviewModal = document.querySelector('#review-modal');
+  const editModal = document.querySelector('#approval-edit-modal');
+  const editForm = document.querySelector('#approval-edit-form');
+  const feedback = document.querySelector('#pending-events-feedback');
+  const escapeApproval = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
+  const approvalDate = (value) => {
+    if (!value) return 'Date to be announced';
+    const raw = String(value);
+    const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?$/.test(raw) ? raw.replace(' ', 'T') : raw;
+    const date = new Date(normalized);
+    return Number.isNaN(date.getTime()) ? escapeApproval(raw) : new Intl.DateTimeFormat('en-KE', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date);
+  };
+  const setModalOpen = (modal, open) => {
+    modal.hidden = !open;
+    modal.classList.toggle('is-open', open);
+    modal.setAttribute('aria-hidden', String(!open));
+    document.body.classList.toggle('review-modal-open', Boolean(document.querySelector('.review-modal.is-open')));
+  };
+  const findPending = (id) => pendingEventsData.find((item) => String(item.event_id ?? item.id) === String(id));
+
+  async function loadPendingEvents() {
+    if (!window.adminAccessReady) return;
+    if (feedback) feedback.textContent = 'Loading pending submissions…';
+    pendingBody.innerHTML = '<tr><td colspan="6" class="admin-table-message">Loading pending events…</td></tr>';
+    try {
+      const response = await window.adminFetch(`${API_BASE_URL}/api/admin/events/pending`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || payload.message || `Pending events request failed (${response.status})`);
+      pendingEventsData = Array.isArray(payload) ? payload : (Array.isArray(payload.events) ? payload.events : []);
+      if (!pendingEventsData.length) {
+        pendingBody.innerHTML = '<tr><td colspan="6" class="admin-table-message">There are no events waiting for approval.</td></tr>';
+      } else {
+        pendingBody.innerHTML = pendingEventsData.map((item) => {
+          const id = item.event_id ?? item.id;
+          return `<tr><td><span class="admin-event-id">#${escapeApproval(id || '—')}</span></td><td><strong>${escapeApproval(item.title || 'Untitled event')}</strong></td><td>${escapeApproval(item.category || '—')}</td><td>${escapeApproval(item.venue || 'Venue to be announced')}</td><td>${approvalDate(item.start_time)}</td><td><div class="admin-approval-actions"><button class="admin-review-event" type="button" data-review-event="${escapeApproval(id)}">Review</button><button class="admin-edit-event" type="button" data-edit-approval="${escapeApproval(id)}">Edit</button><button class="admin-approve-event" type="button" data-approve-event="${escapeApproval(id)}">Approve</button><button class="admin-reject-event" type="button" data-reject-event="${escapeApproval(id)}">Reject</button></div></td></tr>`;
+        }).join('');
+      }
+      if (feedback) feedback.textContent = `${pendingEventsData.length} pending submission${pendingEventsData.length === 1 ? '' : 's'}.`;
+    } catch (error) {
+      console.error('Unable to load pending events:', error);
+      pendingEventsData = [];
+      pendingBody.innerHTML = '<tr><td colspan="6" class="admin-table-message is-error">Pending events could not be loaded. Please refresh to try again.</td></tr>';
+      if (feedback) feedback.textContent = error.message || 'Pending events could not be loaded.';
+    }
+  }
+  window.loadPendingEvents = loadPendingEvents;
+  document.querySelector('#pending-events-refresh')?.addEventListener('click', loadPendingEvents);
+
+  const openReview = (item) => {
+    const image = document.querySelector('#review-event-poster');
+    const rawPoster = String(item.poster_url || '').trim().replace(/^file:\/\/\/[a-z]:/i, '').replace(/\\/g, '/');
+    image.src = apiAssetUrl(rawPoster) || 'https://placehold.co/960x540?text=Event+Poster';
+    image.alt = `${item.title || 'Event'} poster`;
+    document.querySelector('#review-event-title').textContent = item.title || 'Untitled event';
+    document.querySelector('#review-event-category').textContent = item.category || 'Category not provided';
+    document.querySelector('#review-event-venue').textContent = item.venue || 'Venue to be announced';
+    document.querySelector('#review-event-start').textContent = approvalDate(item.start_time);
+    document.querySelector('#review-event-description').textContent = item.description || 'No description provided.';
+    document.querySelector('#review-organizer-name').textContent = item.organizer_name || 'Not provided';
+    document.querySelector('#review-organizer-email').textContent = item.organizer_email || 'Not provided';
+    setModalOpen(reviewModal, true);
+    reviewModal.querySelector('.review-modal-close')?.focus();
+  };
+  const closeReview = () => setModalOpen(reviewModal, false);
+  const closeEdit = () => setModalOpen(editModal, false);
+  document.querySelector('[data-close-review]')?.addEventListener('click', closeReview);
+  document.querySelectorAll('[data-close-approval-edit]').forEach((button) => button.addEventListener('click', closeEdit));
+  [reviewModal, editModal].forEach((modal) => modal?.addEventListener('click', (event) => { if (event.target === modal) setModalOpen(modal, false); }));
+
+  pendingBody.addEventListener('click', async (event) => {
+    const reviewButton = event.target.closest('[data-review-event]');
+    const editButton = event.target.closest('[data-edit-approval]');
+    const approveButton = event.target.closest('[data-approve-event]');
+    const rejectButton = event.target.closest('[data-reject-event]');
+    const button = reviewButton || editButton || approveButton || rejectButton;
+    if (!button) return;
+    const id = button.dataset.reviewEvent || button.dataset.editApproval || button.dataset.approveEvent || button.dataset.rejectEvent;
+    const item = findPending(id);
+    if (!item) return;
+    if (reviewButton) { openReview(item); return; }
+    if (editButton) {
+      document.querySelector('#approval-edit-id').value = item.event_id ?? item.id;
+      document.querySelector('#approval-edit-name').value = item.title || '';
+      const category = document.querySelector('#approval-edit-category');
+      if (item.category && !Array.from(category.options).some((option) => option.value === item.category)) category.add(new Option(item.category, item.category));
+      category.value = item.category || '';
+      document.querySelector('#approval-edit-venue').value = item.venue || '';
+      const date = item.start_time ? new Date(String(item.start_time).replace(' ', 'T')) : null;
+      document.querySelector('#approval-edit-start').value = date && !Number.isNaN(date.getTime()) ? new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16) : '';
+      document.querySelector('#approval-edit-description').value = item.description || '';
+      setModalOpen(editModal, true);
+      document.querySelector('#approval-edit-name').focus();
+      return;
+    }
+    const action = approveButton ? 'approve' : 'reject';
+    const confirmText = action === 'approve' ? 'Are you sure you want to approve this event and push it live?' : 'Are you sure you want to reject and delete this event submission?';
+    if (!window.confirm(confirmText)) return;
+    button.disabled = true;
+    try {
+      const response = await window.adminFetch(`${API_BASE_URL}/api/admin/events/${encodeURIComponent(id)}/${action === 'approve' ? 'approve' : 'reject'}`, { method: action === 'approve' ? 'PUT' : 'DELETE' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || data.error || `Could not ${action} the event.`);
+      await loadPendingEvents();
+    } catch (error) {
+      window.alert(error.message || `Could not ${action} the event.`);
+      button.disabled = false;
+    }
+  });
+
+  editForm?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!editForm.reportValidity()) return;
+    const submit = editForm.querySelector('[type="submit"]');
+    submit.disabled = true;
+    const id = editForm.elements.event_id.value;
+    const body = { title: editForm.elements.title.value.trim(), category: editForm.elements.category.value, venue: editForm.elements.venue.value.trim(), start_time: editForm.elements.start_time.value, description: editForm.elements.description.value.trim() };
+    try {
+      const response = await window.adminFetch(`${API_BASE_URL}/api/admin/events/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || data.message || 'The event could not be updated.');
+      closeEdit();
+      await loadPendingEvents();
+    } catch (error) { window.alert(error.message || 'The event could not be updated.'); }
+    finally { submit.disabled = false; }
+  });
+})();
+
+// Single-view admin workspace: analytics, events, approvals, reconciliation, and support.
 (() => {
   const root = document.querySelector('.admin-dashboard-page');
-  const tabButtons = [...document.querySelectorAll('[data-admin-tab]')];
   const tabPanels = [...document.querySelectorAll('[data-admin-panel]')];
   const eventsBody = document.querySelector('#manage-events-body');
   const ordersBody = document.querySelector('#admin-orders-body');
-  if (!root || !tabButtons.length || !eventsBody || !ordersBody) return;
+  if (!root || !tabPanels.length || !eventsBody || !ordersBody) return;
 
   let events = [];
   let orders = [];
@@ -1837,6 +1996,16 @@ async function deleteEvent(eventId) {
   const ordersSearch = document.querySelector('#admin-orders-search');
   const supportList = document.querySelector('#support-inquiry-list');
   const supportSearch = document.querySelector('#support-search');
+  const pageHeadTitle = document.querySelector('#admin-page-title');
+  const pageHeadEyebrow = document.querySelector('#admin-page-eyebrow');
+  const viewLabels = {
+    overview: { title: 'Sales & Revenue Analytics', eyebrow: 'ADMIN OVERVIEW' },
+    events: { title: 'Events & Ticket Tiers', eyebrow: 'EVENT OPERATIONS' },
+    approvals: { title: 'Pending Event Approvals', eyebrow: 'MODERATION QUEUE' },
+    reconciliation: { title: 'M-Pesa Reconciliation', eyebrow: 'PAYMENT OPERATIONS' },
+    inquiries: { title: 'Support Inquiries', eyebrow: 'CUSTOMER CARE' }
+  };
+  let activeAdminView = 'overview';
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
   const dateLabel = (value) => {
     if (!value) return 'Date to be announced';
@@ -1858,26 +2027,33 @@ async function deleteEvent(eventId) {
     element.className = `${element.id.includes('feedback') ? 'admin-tab-feedback' : 'admin-modal-feedback'}${kind ? ` is-${kind}` : ''}`;
   };
 
-  tabButtons.forEach((button) => button.addEventListener('click', () => {
-    const name = button.dataset.adminTab;
-    tabButtons.forEach((tab) => {
-      const active = tab === button;
-      tab.classList.toggle('is-active', active);
-      tab.setAttribute('aria-selected', String(active));
+  function loadActiveAdminView() {
+    if (!window.adminAccessReady) return;
+    if (activeAdminView === 'events') loadEvents();
+    if (activeAdminView === 'approvals') window.loadPendingEvents?.();
+    if (activeAdminView === 'reconciliation') loadOrders();
+    if (activeAdminView === 'inquiries') loadSupportMessages();
+  }
+  function activateAdminView(name, updateUrl = true) {
+    activeAdminView = Object.hasOwn(viewLabels, name) ? name : 'overview';
+    tabPanels.forEach((panel) => { panel.hidden = panel.dataset.adminPanel !== activeAdminView; });
+    document.querySelectorAll('[data-admin-view-link]').forEach((link) => {
+      const active = link.dataset.adminViewLink === activeAdminView;
+      link.classList.toggle('is-active', active);
+      if (active) link.setAttribute('aria-current', 'page');
+      else link.removeAttribute('aria-current');
     });
-    tabPanels.forEach((panel) => { panel.hidden = panel.dataset.adminPanel !== name; });
-    const headings = { analytics: 'Sales & Analytics', events: 'Events & Ticket Tiers', orders: 'M-Pesa Reconciliation', support: 'Support Inquiries', create: 'Create / Approve Events' };
-    const heading = document.querySelector('.admin-top-header h1');
-    if (heading) heading.textContent = headings[name] || 'Admin Command Center';
-    if (name === 'events') loadEvents();
-    if (name === 'orders') loadOrders();
-    if (name === 'support') loadSupportMessages();
-  }));
-  document.querySelector('.admin-nav-link[href="#recent-events"]')?.addEventListener('click', (event) => {
+    if (pageHeadTitle) pageHeadTitle.textContent = viewLabels[activeAdminView].title;
+    if (pageHeadEyebrow) pageHeadEyebrow.textContent = viewLabels[activeAdminView].eyebrow;
+    if (updateUrl) history.replaceState(null, '', `${window.location.pathname}?view=${activeAdminView}`);
+    document.querySelector('[data-admin-sidebar-close]')?.click();
+    loadActiveAdminView();
+    window.dispatchEvent(new CustomEvent('twende:admin-view-changed', { detail: { view: activeAdminView } }));
+  }
+  document.querySelectorAll('[data-admin-view-link]').forEach((link) => link.addEventListener('click', (event) => {
     event.preventDefault();
-    document.querySelector('[data-admin-tab="events"]')?.click();
-    window.setTimeout(() => document.querySelector('#recent-events')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
-  });
+    activateAdminView(link.dataset.adminViewLink);
+  }));
 
   const renderEvents = () => {
     if (!events.length) {
@@ -2158,13 +2334,10 @@ async function deleteEvent(eventId) {
     const checkOrderButton = event.target.closest('[data-check-order-reference]');
     if (checkOrderButton) {
       const reference = checkOrderButton.dataset.checkOrderReference;
-      const ordersTab = document.querySelector('[data-admin-tab="orders"]');
-      ordersTab?.click();
       if (ordersSearch) ordersSearch.value = reference;
       orderFilter = 'all';
       document.querySelectorAll('[data-order-status]').forEach((pill) => { const active = pill.dataset.orderStatus === 'all'; pill.classList.toggle('is-active', active); pill.setAttribute('aria-pressed', String(active)); });
-      await loadOrders();
-      renderOrders();
+      activateAdminView('reconciliation');
       return;
     }
 
@@ -2190,14 +2363,10 @@ async function deleteEvent(eventId) {
     }
   });
 
-  const initializeAdminWorkspace = () => {
-    if (!window.adminAccessReady) return;
-    if (document.querySelector('[data-admin-panel="events"]:not([hidden])')) loadEvents();
-    if (document.querySelector('[data-admin-panel="orders"]:not([hidden])')) loadOrders();
-    loadSupportMessages();
-  };
-  if (window.adminAccessReady) initializeAdminWorkspace();
-  else window.addEventListener('twende:admin-unlocked', initializeAdminWorkspace);
+  window.refreshAdminView = activateAdminView;
+  const requestedView = new URLSearchParams(window.location.search).get('view') || 'overview';
+  activateAdminView(requestedView);
+  if (!window.adminAccessReady) window.addEventListener('twende:admin-unlocked', loadActiveAdminView, { once: true });
 })();
 
 async function deleteUser(userId) {

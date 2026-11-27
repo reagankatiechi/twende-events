@@ -22,46 +22,36 @@
       <p class="admin-portal-label">ORGANIZER PORTAL</p>
 
       <nav class="admin-sidebar-nav" aria-label="Organizer navigation">
-        <a class="admin-nav-link" href="dashboard.html">
-          <span aria-hidden="true">⌂</span> Overview
-        </a>
-        <a class="admin-nav-link" href="dashboard.html#recent-events">
-          <span aria-hidden="true">▤</span> My Events
-        </a>
-        <a class="admin-nav-link is-active" href="admin-users.html" aria-current="page">
-          <span aria-hidden="true">♙</span> Users
-        </a>
-        <a class="admin-nav-link" href="scanner.html">
-          <span aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><rect x="7" y="7" width="10" height="10"></rect></svg></span> Gate Scanner
-        </a>
-        <a class="admin-nav-link admin-nav-create" href="create-event.html">
-          <span aria-hidden="true">＋</span> Create Event
-        </a>
+        <a class="admin-nav-link" data-admin-view-link="overview" href="dashboard.html?view=overview"><span aria-hidden="true">⌂</span> Overview</a>
+        <a class="admin-nav-link" data-admin-view-link="events" href="dashboard.html?view=events"><span aria-hidden="true">▤</span> Events &amp; Tiers</a>
+        <a class="admin-nav-link" data-admin-view-link="approvals" href="dashboard.html?view=approvals"><span aria-hidden="true">✓</span> Pending Approvals</a>
+        <a class="admin-nav-link" data-admin-view-link="reconciliation" href="dashboard.html?view=reconciliation"><span aria-hidden="true">↻</span> M-Pesa Reconciliation</a>
+        <a class="admin-nav-link" data-admin-view-link="inquiries" href="dashboard.html?view=inquiries"><span aria-hidden="true">✉</span> Support Inquiries <span class="admin-nav-count" id="support-unread-count">0</span></a>
+        <a class="admin-nav-link is-active" href="admin-users.html" aria-current="page"><span aria-hidden="true">♙</span> Users</a>
+        <a class="admin-nav-link" href="scanner.html"><span aria-hidden="true">▦</span> Gate Scanner</a>
+        <a class="admin-nav-link admin-nav-create" href="create-event.html"><span aria-hidden="true">＋</span> Create Event</a>
       </nav>
 
-      <a class="admin-back-link" href="index.html">← Back to Twende Events</a>
     </aside>
+    <button class="admin-sidebar-backdrop" type="button" data-admin-sidebar-close aria-label="Close navigation" hidden></button>
 
     <main class="admin-main">
       <header class="admin-top-header">
-        <div>
-          <p class="admin-eyebrow">ORGANIZER PORTAL</p>
-          <h1>Registered Users</h1>
+        <div class="admin-header-title">
+          <button class="admin-menu-toggle" type="button" data-admin-sidebar-toggle aria-label="Open navigation" aria-expanded="false">☰</button>
+          <div><p class="admin-eyebrow" id="admin-page-eyebrow">ACCOUNT MANAGEMENT</p><h1 id="admin-page-title">Registered Users</h1></div>
         </div>
-        <button class="admin-lock-button" type="button" data-lock-admin>Lock Admin</button>
-        <div class="admin-user-chip" aria-label="Signed in as Admin">
-          <span class="admin-user-avatar" aria-hidden="true">A</span>
-          <span>Admin</span>
+        <div class="admin-header-actions">
+          <div class="admin-user-chip" aria-label="Signed in as Admin"><span class="admin-user-avatar" aria-hidden="true">A</span><span>Admin</span></div>
+          <button class="admin-lock-button" type="button" data-lock-admin>Lock Admin</button>
         </div>
       </header>
 
-      <section class="admin-events-panel admin-users-panel" aria-labelledby="registered-users-title">
+      <section class="admin-events-panel admin-users-panel" aria-label="Registered users directory">
         <div class="admin-section-heading admin-events-heading">
           <div>
-            <p class="admin-eyebrow">ACCOUNT MANAGEMENT</p>
-            <h2 id="registered-users-title">Registered Users</h2>
+            <p class="admin-users-caption">Platform accounts</p>
           </div>
-          <span class="admin-users-caption">Platform accounts</span>
         </div>
 
         <div class="admin-table-wrap">
