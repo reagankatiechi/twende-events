@@ -117,8 +117,10 @@ async function sendOrderTicketEmail(orderId) {
     const [orders] = await pool.query(
         `SELECT o.order_id, o.user_id, o.event_id, o.tier_id, o.quantity, o.total_amount,
                 o.payment_status, o.attendee_name, o.attendee_email, o.mpesa_receipt_number, o.created_at,
-                e.title AS event_title, e.start_time, e.venue, e.city,
-                tt.tier_name, u.full_name AS user_name, u.email AS user_email
+                COALESCE(e.title, o.event_title_snapshot, 'Archived Event') AS event_title,
+                e.start_time, e.venue, e.city,
+                COALESCE(tt.tier_name, o.tier_name_snapshot, 'General') AS tier_name,
+                u.full_name AS user_name, u.email AS user_email
          FROM Orders o
          LEFT JOIN Ticket_Tiers tt ON tt.tier_id = o.tier_id
          LEFT JOIN Events e ON e.event_id = COALESCE(o.event_id, tt.event_id)
@@ -209,9 +211,9 @@ async function ensurePaymentSchema() {
     const connection = await pool.getConnection();
     try {
         const tableColumns = new Map();
-        for (const tableName of ['Orders', 'Purchased_Tickets', 'Ticket_Tiers', 'Users']) {
+        for (const tableName of ['Orders', 'Purchased_Tickets', 'Ticket_Tiers', 'Tickets', 'Users']) {
             const [columns] = await connection.query(
-                `SELECT COLUMN_NAME, IS_NULLABLE, COLUMN_KEY
+                `SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY
                  FROM INFORMATION_SCHEMA.COLUMNS
                  WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?`,
                 [databaseName, tableName]
@@ -238,6 +240,8 @@ async function ensurePaymentSchema() {
                 payment_failure_reason: 'TEXT NULL',
                 attendee_name: 'VARCHAR(255) NULL',
                 attendee_email: 'VARCHAR(255) NULL',
+                event_title_snapshot: 'VARCHAR(255) NULL',
+                tier_name_snapshot: 'VARCHAR(120) NULL',
                 created_at: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP',
                 updated_at: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'
             },
@@ -250,6 +254,7 @@ async function ensurePaymentSchema() {
                 ticket_code: 'VARCHAR(100) NULL',
                 qr_code_data: 'TEXT NULL',
                 attendee_name: 'VARCHAR(255) NULL',
+                event_title_snapshot: 'VARCHAR(255) NULL',
                 status: "VARCHAR(32) NOT NULL DEFAULT 'valid'",
                 purchase_date: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP'
             },
@@ -261,7 +266,8 @@ async function ensurePaymentSchema() {
                 capacity: 'INT NULL',
                 quantity_sold: 'INT NOT NULL DEFAULT 0',
                 description: 'TEXT NULL'
-            }
+            },
+            Tickets: {}
         };
 
         for (const [tableName, tableDefinitions] of Object.entries(definitions)) {
@@ -298,7 +304,41 @@ async function ensurePaymentSchema() {
                 await connection.query("ALTER TABLE `Orders` MODIFY COLUMN `payment_status` VARCHAR(32) NOT NULL DEFAULT 'pending'");
                 console.log('[schema] Ensured Orders.payment_status accepts payment states');
             }
+
+            // Archived event and tier foreign keys must be nullable so deleting
+            // catalog rows can preserve the corresponding financial records.
+            if (['Orders', 'Purchased_Tickets', 'Tickets'].includes(tableName)) {
+                for (const columnName of ['event_id', 'tier_id']) {
+                    const column = columns.find((item) => item.COLUMN_NAME === columnName);
+                    if (!column || column.IS_NULLABLE === 'YES') continue;
+                    await connection.query(
+                        `ALTER TABLE ?? MODIFY COLUMN ?? ${column.COLUMN_TYPE} NULL`,
+                        [tableName, columnName]
+                    );
+                    console.log(`[schema] Updated ${tableName}.${columnName} to allow NULL`);
+                }
+            }
         }
+
+        // Snapshot names before an event or tier is ever removed. These
+        // idempotent backfills also repair historical rows on existing installs.
+        await connection.query(
+            `UPDATE Orders o
+             LEFT JOIN Ticket_Tiers tt ON tt.tier_id = o.tier_id
+             LEFT JOIN Events e ON e.event_id = COALESCE(o.event_id, tt.event_id)
+             SET o.event_title_snapshot = COALESCE(NULLIF(o.event_title_snapshot, ''), e.title),
+                 o.tier_name_snapshot = COALESCE(NULLIF(o.tier_name_snapshot, ''), tt.tier_name)
+             WHERE o.event_title_snapshot IS NULL OR o.tier_name_snapshot IS NULL`
+        );
+        await connection.query(
+            `UPDATE Purchased_Tickets pt
+             LEFT JOIN Tickets t ON t.ticket_code = pt.ticket_code
+             LEFT JOIN Orders o ON o.order_id = COALESCE(t.order_id, pt.order_id)
+             LEFT JOIN Ticket_Tiers tt ON tt.tier_id = COALESCE(pt.tier_id, t.tier_id, o.tier_id)
+             LEFT JOIN Events e ON e.event_id = COALESCE(pt.event_id, o.event_id, tt.event_id)
+             SET pt.event_title_snapshot = COALESCE(NULLIF(pt.event_title_snapshot, ''), e.title, o.event_title_snapshot)
+             WHERE pt.event_title_snapshot IS NULL`
+        );
         await connection.query(`
             CREATE TABLE IF NOT EXISTS Saved_Events (
                 id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -529,8 +569,8 @@ app.get('/api/admin/analytics', async (req, res) => {
                     COALESCE(NULLIF(o.phone_number, ''), NULLIF(o.checkout_phone, ''), NULLIF(u.phone_number, ''), 'N/A') AS phone_number,
                     COALESCE(NULLIF(u.email, ''), NULLIF(o.attendee_email, ''), 'N/A') AS email,
                     COALESCE(pt.event_id, o.event_id, e.event_id) AS event_id,
-                    e.title AS event_title,
-                    COALESCE(NULLIF(tt.tier_name, ''), 'General') AS tier_name,
+                     COALESCE(e.title, o.event_title_snapshot, pt.event_title_snapshot, 'Archived Event') AS event_title,
+                     COALESCE(NULLIF(tt.tier_name, ''), NULLIF(o.tier_name_snapshot, ''), 'General') AS tier_name,
                     COALESCE(o.total_amount, 0) AS amount_paid,
                     COALESCE(NULLIF(o.mpesa_receipt_number, ''), 'N/A') AS mpesa_receipt
              FROM Purchased_Tickets pt
@@ -571,8 +611,9 @@ app.get('/api/admin/orders', async (req, res) => {
     }
     try {
         const [orders] = await pool.query(
-            `SELECT o.order_id, o.event_id, e.title AS event_title,
-                    COALESCE(NULLIF(tt.tier_name, ''), 'General') AS tier_name,
+            `SELECT o.order_id, o.event_id,
+                    COALESCE(e.title, o.event_title_snapshot, 'Archived Event') AS event_title,
+                    COALESCE(NULLIF(tt.tier_name, ''), NULLIF(o.tier_name_snapshot, ''), 'General') AS tier_name,
                     o.quantity, o.total_amount,
                     COALESCE(NULLIF(o.phone_number, ''), NULLIF(o.checkout_phone, ''), u.phone_number, 'N/A') AS phone_number,
                     COALESCE(NULLIF(o.attendee_name, ''), NULLIF(u.full_name, ''), 'Guest Attendee') AS attendee_name,
@@ -830,6 +871,7 @@ async function insertPurchasedTicket(connection, order, ticketCode, ticketColumn
         user_id: order.user_id,
         event_id: order.event_id,
         tier_id: order.tier_id,
+        event_title_snapshot: order.event_title_snapshot || null,
         ticket_code: ticketCode,
         qr_code_data: ticketCode,
         attendee_name: order.attendee_name || 'Guest',
@@ -872,7 +914,7 @@ async function fulfillPaidOrder(orderId, mpesaReceipt = null) {
         await connection.beginTransaction();
         const [orders] = await connection.query(
             `SELECT order_id, user_id, event_id, total_amount, tier_id, quantity, payment_status,
-                    attendee_name,
+                    attendee_name, event_title_snapshot, tier_name_snapshot,
                     mpesa_receipt_number
              FROM Orders WHERE order_id = ? LIMIT 1 FOR UPDATE`,
             [orderId]
@@ -1062,7 +1104,7 @@ app.post('/api/payments/stk-push', authenticateUser, async (req, res) => {
             return res.status(404).json({ error: 'Account not found. Please sign in again.' });
         }
         const [tiers] = await connection.query(
-            `SELECT tt.tier_id, tt.event_id, tt.tier_name, tt.price, tt.capacity, tt.quantity_sold
+            `SELECT tt.tier_id, tt.event_id, tt.tier_name, tt.price, tt.capacity, tt.quantity_sold, e.title AS event_title
              FROM Ticket_Tiers tt
              JOIN Events e ON e.event_id = tt.event_id
              WHERE tt.tier_id = ? AND tt.event_id = ? AND e.approval_status = 'approved'
@@ -1100,11 +1142,11 @@ app.post('/api/payments/stk-push', authenticateUser, async (req, res) => {
         const [insertResult] = await connection.query(
             `INSERT INTO Orders
                 (user_id, event_id, total_amount, checkout_phone, phone_number, payment_status, external_reference,
-                 tier_id, quantity, attendee_name, attendee_email, created_at)
-             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, NOW())`,
-            [userId, eventId, totalAmount, phoneNumber, phoneNumber, externalReference, tierId, quantity, attendeeName, attendeeEmail]
+                 tier_id, quantity, attendee_name, attendee_email, event_title_snapshot, tier_name_snapshot, created_at)
+             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, NOW())`,
+            [userId, eventId, totalAmount, phoneNumber, phoneNumber, externalReference, tierId, quantity, attendeeName, attendeeEmail, tiers[0].event_title, tiers[0].tier_name]
         );
-        order = { orderId: insertResult.insertId, externalReference, totalAmount, eventId, tierId, quantity, attendeeName };
+        order = { orderId: insertResult.insertId, externalReference, totalAmount, eventId, tierId, quantity, attendeeName, eventTitle: tiers[0].event_title, tierName: tiers[0].tier_name };
         await connection.commit();
     } catch (error) {
         await connection.rollback();
@@ -1792,28 +1834,79 @@ app.delete('/api/events/:id', requireAdminAccess, async (req, res) => {
             return res.status(404).json({ error: 'Event not found.' });
         }
 
-        // Delete children first so foreign keys cannot block the event row.
-        for (const [table, sql] of [
-            ['Saved_Events', 'DELETE FROM Saved_Events WHERE event_id = ?'],
-            ['Purchased_Tickets', `DELETE FROM Purchased_Tickets
-                WHERE event_id = ? OR tier_id IN (SELECT tier_id FROM Ticket_Tiers WHERE event_id = ?)
-                   OR order_id IN (SELECT order_id FROM Orders WHERE event_id = ? OR tier_id IN (SELECT tier_id FROM Ticket_Tiers WHERE event_id = ?))`],
-            ['Tickets', `DELETE FROM Tickets
-                WHERE tier_id IN (SELECT tier_id FROM Ticket_Tiers WHERE event_id = ?)
-                   OR order_id IN (SELECT order_id FROM Orders WHERE event_id = ? OR tier_id IN (SELECT tier_id FROM Ticket_Tiers WHERE event_id = ?))`],
-            ['Orders by tier', 'DELETE FROM Orders WHERE tier_id IN (SELECT tier_id FROM Ticket_Tiers WHERE event_id = ?)'],
-            ['Orders by event', 'DELETE FROM Orders WHERE event_id = ?'],
-            ['Ticket_Tiers', 'DELETE FROM Ticket_Tiers WHERE event_id = ?']
-        ]) {
-            try {
-                await conn.query(sql, Array((sql.match(/\?/g) || []).length).fill(eventId));
-            } catch (error) {
-                // Some legacy installs may not have an optional child table/column.
-                const missingSchemaObject = error.code === 'ER_NO_SUCH_TABLE' || error.code === 'ER_BAD_FIELD_ERROR';
-                if (!missingSchemaObject) throw error;
-                console.warn(`[Delete Event] Skipped optional cleanup for ${table}:`, error.message);
-            }
+        // Saved-event bookmarks are catalog data; paid orders, issued tickets,
+        // and Tickets rows are financial/entry records and must be retained.
+        try {
+            await conn.query('DELETE FROM Saved_Events WHERE event_id = ?', [eventId]);
+        } catch (error) {
+            if (!['ER_NO_SUCH_TABLE', 'ER_BAD_FIELD_ERROR'].includes(error.code)) throw error;
+            console.warn('[Delete Event] Saved_Events cleanup skipped:', error.message);
         }
+
+        // Snapshot all display names while the event and ticket tiers still exist.
+        await conn.query(
+            `UPDATE Orders o
+             LEFT JOIN Ticket_Tiers tt ON tt.tier_id = o.tier_id
+             LEFT JOIN Events e ON e.event_id = COALESCE(o.event_id, tt.event_id)
+             SET o.event_title_snapshot = COALESCE(NULLIF(o.event_title_snapshot, ''), e.title),
+                 o.tier_name_snapshot = COALESCE(NULLIF(o.tier_name_snapshot, ''), tt.tier_name)
+             WHERE o.event_id = ? OR tt.event_id = ?`,
+            [eventId, eventId]
+        );
+        await conn.query(
+            `UPDATE Purchased_Tickets pt
+             LEFT JOIN Tickets t ON t.ticket_code = pt.ticket_code
+             LEFT JOIN Orders o ON o.order_id = COALESCE(t.order_id, pt.order_id)
+             LEFT JOIN Ticket_Tiers tt ON tt.tier_id = COALESCE(pt.tier_id, t.tier_id, o.tier_id)
+             LEFT JOIN Events e ON e.event_id = COALESCE(pt.event_id, o.event_id, tt.event_id)
+             SET pt.event_title_snapshot = COALESCE(NULLIF(pt.event_title_snapshot, ''), e.title, o.event_title_snapshot)
+             WHERE pt.event_id = ? OR o.event_id = ? OR tt.event_id = ?`,
+            [eventId, eventId, eventId]
+        );
+
+        // Unlink, rather than delete, tickets so tier/event foreign keys cannot
+        // cascade into permanent purchase history.
+        const [ticketColumns] = await conn.query(
+            `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'Tickets'`,
+            [process.env.DB_NAME || 'defaultdb']
+        );
+        const ticketColumnNames = new Set(ticketColumns.map((column) => column.COLUMN_NAME));
+        const ticketAssignments = [];
+        const ticketConditions = [];
+        if (ticketColumnNames.has('tier_id')) {
+            ticketAssignments.push('tier_id = NULL');
+            ticketConditions.push('t.tier_id IN (SELECT tier_id FROM Ticket_Tiers WHERE event_id = ?)');
+        }
+        if (ticketColumnNames.has('event_id')) {
+            ticketAssignments.push('event_id = NULL');
+            ticketConditions.push('t.event_id = ?');
+        }
+        if (ticketAssignments.length) {
+            await conn.query(
+                `UPDATE Tickets t SET ${ticketAssignments.join(', ')} WHERE ${ticketConditions.join(' OR ')}`,
+                Array(ticketConditions.length).fill(eventId)
+            );
+        }
+
+        await conn.query(
+            `UPDATE Purchased_Tickets pt
+             LEFT JOIN Tickets t ON t.ticket_code = pt.ticket_code
+             LEFT JOIN Orders o ON o.order_id = COALESCE(t.order_id, pt.order_id)
+             LEFT JOIN Ticket_Tiers tt ON tt.tier_id = COALESCE(pt.tier_id, t.tier_id, o.tier_id)
+             SET pt.event_id = NULL, pt.tier_id = NULL
+             WHERE pt.event_id = ? OR o.event_id = ? OR tt.event_id = ?`,
+            [eventId, eventId, eventId]
+        );
+        await conn.query(
+            `UPDATE Orders o
+             LEFT JOIN Ticket_Tiers tt ON tt.tier_id = o.tier_id
+             SET o.event_id = NULL, o.tier_id = NULL
+             WHERE o.event_id = ? OR tt.event_id = ?`,
+            [eventId, eventId]
+        );
+
+        await conn.query('DELETE FROM Ticket_Tiers WHERE event_id = ?', [eventId]);
 
         const [result] = await conn.query(`DELETE FROM Events WHERE event_id = ?`, [eventId]);
         if (!result.affectedRows) {
@@ -2019,9 +2112,11 @@ app.get('/api/user/dashboard', authenticateUser, async (req, res) => {
         const [tickets] = await pool.query(
             `SELECT pt.ticket_id, pt.ticket_code, pt.status, pt.purchase_date,
                     COALESCE(NULLIF(u.full_name, ''), NULLIF(o.attendee_name, ''), pt.attendee_name, 'Guest Attendee') AS attendee_name,
-                    e.event_id, e.title AS event_title, e.start_time AS event_date, TIME(e.start_time) AS event_time,
+                    COALESCE(e.event_id, o.event_id, pt.event_id) AS event_id,
+                    COALESCE(e.title, o.event_title_snapshot, pt.event_title_snapshot, 'Archived Event') AS event_title,
+                    e.start_time AS event_date, TIME(e.start_time) AS event_time,
                     e.venue, e.city AS location, e.poster_url,
-                    COALESCE(NULLIF(tt.tier_name, ''), 'General') AS tier_name,
+                    COALESCE(NULLIF(tt.tier_name, ''), NULLIF(o.tier_name_snapshot, ''), 'General') AS tier_name,
                     o.mpesa_receipt_number,
                     CASE WHEN LOWER(COALESCE(pt.status, '')) = 'used' OR COALESCE(t.is_scanned, 0) = 1 THEN 'used' ELSE 'valid' END AS ticket_status
              FROM Purchased_Tickets pt
@@ -2037,8 +2132,9 @@ app.get('/api/user/dashboard', authenticateUser, async (req, res) => {
             [userId, userId, account.email, phoneDigits, phoneDigits]
         );
         const [orders] = await pool.query(
-            `SELECT o.order_id, o.event_id, e.title AS event_title,
-                    COALESCE(NULLIF(tt.tier_name, ''), 'General') AS tier_name,
+            `SELECT o.order_id, o.event_id,
+                    COALESCE(e.title, o.event_title_snapshot, 'Archived Event') AS event_title,
+                    COALESCE(NULLIF(tt.tier_name, ''), NULLIF(o.tier_name_snapshot, ''), 'General') AS tier_name,
                     o.quantity, o.total_amount, COALESCE(NULLIF(o.phone_number, ''), NULLIF(o.checkout_phone, ''), u.phone_number, 'N/A') AS phone_number,
                     o.mpesa_receipt_number, o.payment_status, o.external_reference, o.created_at
              FROM Orders o
@@ -2154,11 +2250,11 @@ app.get('/api/user/tickets/:userId', authenticateUser, async (req, res) => {
                     CASE WHEN LOWER(COALESCE(pt.status, '')) = 'used' OR COALESCE(t.is_scanned, 0) = 1 THEN 'used' ELSE 'valid' END AS status,
                     COALESCE(pt.purchase_date, o.created_at) AS purchased_at,
                     COALESCE(NULLIF(pt.attendee_name, ''), NULLIF(o.attendee_name, ''), u.full_name) AS attendee_name,
-                    e.title,
+                    COALESCE(e.title, o.event_title_snapshot, pt.event_title_snapshot, 'Archived Event') AS title,
                     e.start_time,
                     e.venue,
                     e.poster_url,
-                    tt.tier_name
+                    COALESCE(NULLIF(tt.tier_name, ''), NULLIF(o.tier_name_snapshot, ''), 'General') AS tier_name
              FROM Purchased_Tickets pt
              LEFT JOIN Events e ON pt.event_id = e.event_id
              LEFT JOIN Tickets t ON t.ticket_code = pt.ticket_code
