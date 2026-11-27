@@ -177,16 +177,26 @@ async function sendOrderTicketEmail(orderId) {
           <h2 style="margin:26px 0 8px;font-size:19px">Your QR Tickets</h2>
           ${ticketCards.join('')}
           <p style="text-align:center;margin:28px 0"><a href="https://twende-events.onrender.com/user-dashboard.html" style="display:inline-block;padding:14px 22px;background:#e60000;color:#fff;text-decoration:none;border-radius:9px;font-weight:bold">View My Tickets</a></p>
-          <p style="font-size:12px;color:#777;text-align:center">Twende Events · Kisii County, Kenya</p>
+          <p style="font-size:12px;color:#777;text-align:center">Twende Events · Kisii, Kenya — Reply directly to this email if you need help with your tickets.</p>
         </main>
       </div>
     </body></html>`;
 
     await mailTransporter.sendMail({
         from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+        replyTo: process.env.REPLY_TO || process.env.SMTP_USER,
         to: recipientEmail,
         subject: `Your Tickets & Receipt — ${eventTitle} (Order #${orderId})`,
         html,
+        text: [
+            `Order #: ${order.order_id}`,
+            `Event Title: ${eventTitle}`,
+            `Date/Time: ${dateTime}`,
+            `Venue: ${[order.venue, order.city].filter(Boolean).join(', ') || 'Venue to be announced'}`,
+            `M-Pesa Receipt: ${order.mpesa_receipt_number || 'Not provided'}`,
+            `Amount Paid: KES ${Number(order.total_amount || 0).toLocaleString('en-KE')}`,
+            `Ticket Codes: ${tickets.map((ticket) => ticket.ticket_code).filter(Boolean).join(', ') || 'Not available'}`
+        ].join('\n'),
         attachments
     });
     return { sent: true, recipient: recipientEmail };
