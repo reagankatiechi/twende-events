@@ -96,12 +96,27 @@ function escapeEmailHtml(value) {
     })[character]);
 }
 
+function formatEmailDateTime(value) {
+    if (!value) return 'TBA';
+    try {
+        const date = new Date(value);
+        return Number.isNaN(date.getTime())
+            ? String(value || 'TBA')
+            : new Intl.DateTimeFormat('en-KE', {
+                weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+                hour: 'numeric', minute: '2-digit'
+            }).format(date);
+    } catch (_) {
+        return String(value || 'TBA');
+    }
+}
+
 async function sendOrderTicketEmail(orderId) {
     if (!smtpConfigured || !mailTransporter) return { sent: false, reason: 'SMTP not configured' };
 
     const [orders] = await pool.query(
         `SELECT o.order_id, o.user_id, o.event_id, o.tier_id, o.quantity, o.total_amount,
-                o.payment_status, o.attendee_name, o.attendee_email, o.mpesa_receipt_number,
+                o.payment_status, o.attendee_name, o.attendee_email, o.mpesa_receipt_number, o.created_at,
                 e.title AS event_title, e.start_time, e.venue, e.city,
                 tt.tier_name, u.full_name AS user_name, u.email AS user_email
          FROM Orders o
@@ -139,9 +154,8 @@ async function sendOrderTicketEmail(orderId) {
         </article>`;
     }));
     const eventTitle = order.event_title || 'Twende Events';
-    const dateTime = order.start_time
-        ? new Intl.DateTimeFormat('en-KE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(String(order.start_time).replace(' ', 'T')))
-        : 'To be announced';
+    const dateTime = formatEmailDateTime(order.start_time);
+    const purchaseDateTime = formatEmailDateTime(order.created_at);
     const quantity = Number(order.quantity || tickets.length);
     const safe = escapeEmailHtml;
     const html = `<!doctype html><html><body style="margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#222">
@@ -154,6 +168,7 @@ async function sendOrderTicketEmail(orderId) {
             <p style="margin:7px 0"><strong>Order #:</strong> ${safe(order.order_id)}</p>
             <p style="margin:7px 0"><strong>M-Pesa Receipt:</strong> ${safe(order.mpesa_receipt_number || 'Not provided')}</p>
             <p style="margin:7px 0"><strong>Amount Paid:</strong> KES ${Number(order.total_amount || 0).toLocaleString('en-KE')}</p>
+            <p style="margin:7px 0"><strong>Payment Date:</strong> ${safe(purchaseDateTime)}</p>
             <p style="margin:7px 0"><strong>Event Name:</strong> ${safe(eventTitle)}</p>
             <p style="margin:7px 0"><strong>Date &amp; Time:</strong> ${safe(dateTime)}</p>
             <p style="margin:7px 0"><strong>Venue:</strong> ${safe([order.venue, order.city].filter(Boolean).join(', ') || 'Venue to be announced')}</p>
