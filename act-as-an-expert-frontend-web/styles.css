@@ -359,7 +359,7 @@
 .user-dashboard-brand > span > span { color: #e60000; }
 .user-dashboard-logout { min-height: 41px; padding: 0 20px; border: 0; border-radius: 7px; background: #e60000; color: #fff; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; transition: background .2s ease, transform .2s ease; }
 .user-dashboard-logout:hover { background: #c90000; transform: translateY(-1px); }
-.user-dashboard-main { width: min(1100px, calc(100% - 48px)); margin: 0 auto; padding: 61px 0 88px; }
+.user-dashboard-main { width: min(1100px, calc(100% - 48px)); margin: 0 auto; padding: 96px 0 88px; }
 .user-dashboard-eyebrow { margin: 0; color: #e60000; font-size: 9px; font-weight: 800; letter-spacing: 1.4px; }
 .user-dashboard-welcome h1 { margin: 11px 0 8px; font-family: 'Manrope', sans-serif; font-size: clamp(31px, 4.5vw, 44px); font-weight: 800; letter-spacing: -1.8px; line-height: 1.12; }
 .user-dashboard-welcome h1 span { color: #e60000; }
