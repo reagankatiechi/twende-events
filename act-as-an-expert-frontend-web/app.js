@@ -2030,7 +2030,7 @@ async function deleteEvent(eventId) {
       const state = String(order.payment_status || 'pending').toLowerCase();
       const paid = ['paid', 'completed'].includes(state);
       const statusClass = paid ? 'is-paid' : state === 'pending' ? 'is-pending' : 'is-failed';
-      const actions = paid ? '<span class="admin-order-complete">Tickets issued</span>' : `<button class="admin-row-button" type="button" data-check-payhero="${esc(order.order_id)}">Check PayHero</button><button class="admin-row-button is-warning" type="button" data-manual-issue="${esc(order.order_id)}">Manual Issue</button>`;
+      const actions = paid ? `<span class="admin-order-complete">Tickets issued</span><button class="admin-row-button is-secondary" type="button" data-admin-resend-email="${esc(order.order_id)}">Resend Email</button>` : `<button class="admin-row-button" type="button" data-check-payhero="${esc(order.order_id)}">Check PayHero</button><button class="admin-row-button is-warning" type="button" data-manual-issue="${esc(order.order_id)}">Manual Issue</button>`;
       return `<tr><td>#${esc(order.order_id)}</td><td><strong>${esc(order.attendee_name || 'Guest')}</strong><small>${esc(order.phone_number || 'N/A')}</small></td><td><strong>${esc(order.event_title || 'Event unavailable')}</strong><small>${esc(order.tier_name || 'General')}</small></td><td>KES ${money(order.total_amount)}</td><td><code>${esc(order.mpesa_receipt_number || '—')}</code>${order.failure_reason ? `<small>${esc(order.failure_reason)}</small>` : ''}</td><td><span class="admin-order-status ${statusClass}">${esc(state)}</span></td><td>${dateLabel(order.created_at)}</td><td><div class="admin-row-actions">${actions}</div></td></tr>`;
     }).join('');
   };
@@ -2064,6 +2064,22 @@ async function deleteEvent(eventId) {
     finally { button.disabled = false; }
   });
   ordersBody.addEventListener('click', async (event) => {
+    const resendButton = event.target.closest('[data-admin-resend-email]');
+    if (resendButton) {
+      const feedback = document.querySelector('#reconciliation-feedback');
+      resendButton.disabled = true;
+      feedback.textContent = 'Sending tickets and receipt email…';
+      try {
+        const result = await getJson(`${API_BASE_URL}/api/orders/${encodeURIComponent(resendButton.dataset.adminResendEmail)}/resend-email`, { method: 'POST' });
+        feedback.textContent = result.message || 'Tickets and receipt email sent.';
+        await loadOrders();
+        feedback.textContent = result.message || 'Tickets and receipt email sent.';
+      } catch (error) {
+        feedback.textContent = error.message || 'Ticket email could not be sent.';
+        resendButton.disabled = false;
+      }
+      return;
+    }
     const checkButton = event.target.closest('[data-check-payhero]');
     const manualButton = event.target.closest('[data-manual-issue]');
     const orderId = checkButton?.dataset.checkPayhero || manualButton?.dataset.manualIssue;
@@ -2549,7 +2565,7 @@ async function deleteUser(userId) {
     const tableRows = orders.map((order) => {
       const state = statusText(order.payment_status);
       const action = state === 'Paid'
-        ? `<button class="hub-quiet-button" type="button" data-download-receipt="${escapeHub(order.order_id)}">Download Receipt</button>`
+        ? `<button class="hub-quiet-button" type="button" data-download-receipt="${escapeHub(order.order_id)}">Download Receipt</button> <button class="hub-quiet-button" type="button" data-resend-email="${escapeHub(order.order_id)}">Resend Email</button>`
         : state === 'Pending'
           ? `<button class="hub-quiet-button" type="button" data-verify-order="${escapeHub(order.external_reference || order.order_id)}">Verify Now</button>` : '—';
       return `<tr><td>#${escapeHub(order.order_id)}</td><td><strong>${escapeHub(order.event_title || 'Event')}</strong><small>${escapeHub(order.tier_name || 'General')}</small></td><td>${escapeHub(order.quantity || 1)}</td><td>KES ${formatHubMoney(order.total_amount)}</td><td><code class="receipt-code">${escapeHub(order.mpesa_receipt_number || 'N/A')}</code></td><td>${escapeHub(formatHubDate(order.created_at))}</td><td><span class="order-status ${statusClass(order.payment_status)}">${state}</span></td><td>${action}</td></tr>`;
@@ -2558,7 +2574,7 @@ async function deleteUser(userId) {
     ordersMobile.innerHTML = orders.map((order) => {
       const state = statusText(order.payment_status);
       const action = state === 'Paid'
-        ? `<button class="hub-quiet-button" type="button" data-download-receipt="${escapeHub(order.order_id)}">Download Receipt</button>`
+        ? `<button class="hub-quiet-button" type="button" data-download-receipt="${escapeHub(order.order_id)}">Download Receipt</button> <button class="hub-quiet-button" type="button" data-resend-email="${escapeHub(order.order_id)}">Resend Email</button>`
         : state === 'Pending' ? `<button class="hub-quiet-button" type="button" data-verify-order="${escapeHub(order.external_reference || order.order_id)}">Verify Now</button>` : '';
       return `<article class="payment-order-card"><div><small>ORDER #${escapeHub(order.order_id)}</small><span class="order-status ${statusClass(order.payment_status)}">${state}</span></div><h3>${escapeHub(order.event_title || 'Event')}</h3><p>${escapeHub(order.tier_name || 'General')} · ${escapeHub(order.quantity || 1)} ticket(s)</p><strong>KES ${formatHubMoney(order.total_amount)}</strong><code class="receipt-code">${escapeHub(order.mpesa_receipt_number || 'M-Pesa receipt pending')}</code><small>${escapeHub(formatHubDate(order.created_at))}</small>${action}</article>`;
     }).join('');
@@ -2748,6 +2764,26 @@ async function deleteUser(userId) {
         link.download = `${String(ticket?.event_title || 'Twende_Event').trim().replace(/\s+/g, '_').replace(/[^\w-]/g, '')}_Ticket.jpg`;
         link.click();
       } catch (error) { console.error('Could not download the ticket:', error); window.alert('Could not download this ticket. Please try again.'); }
+      return;
+    }
+
+    const resendEmailButton = event.target.closest('[data-resend-email]');
+    if (resendEmailButton) {
+      const orderId = resendEmailButton.dataset.resendEmail;
+      resendEmailButton.disabled = true;
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/orders/${encodeURIComponent(orderId)}/resend-email`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${user.token}` }
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || data.message || 'Ticket email could not be sent.');
+        setToast(data.message || 'Tickets and receipt email sent.', 'success');
+      } catch (error) {
+        setToast(error.message || 'Ticket email could not be sent.', 'error');
+      } finally {
+        resendEmailButton.disabled = false;
+      }
       return;
     }
 

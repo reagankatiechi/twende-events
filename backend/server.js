@@ -8,6 +8,8 @@ const multer = require('multer');
 const path = require('path');
 const { randomUUID, createHmac, timingSafeEqual } = require('crypto');
 const cloudinary = require('cloudinary').v2;
+const nodemailer = require('nodemailer');
+const QRCode = require('qrcode');
 
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -72,6 +74,108 @@ const pool = mysql.createPool({
     connectionLimit: 10,
     queueLimit: 0
 });
+
+// Transactional email is optional for local development; checkout and ticket
+// issuance continue normally when SMTP credentials have not been configured.
+const smtpConfigured = Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+const mailTransporter = smtpConfigured
+    ? nodemailer.createTransport({
+        host: process.env.SMTP_HOST,
+        port: Number(process.env.SMTP_PORT || 587),
+        secure: Number(process.env.SMTP_PORT) === 465,
+        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+    })
+    : null;
+if (!smtpConfigured) {
+    console.warn('[Ticket Email] SMTP_HOST, SMTP_USER, or SMTP_PASS is missing; receipt email delivery is disabled.');
+}
+
+function escapeEmailHtml(value) {
+    return String(value ?? '').replace(/[&<>\"']/g, (character) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', "'": '&#39;'
+    })[character]);
+}
+
+async function sendOrderTicketEmail(orderId) {
+    if (!smtpConfigured || !mailTransporter) return { sent: false, reason: 'SMTP not configured' };
+
+    const [orders] = await pool.query(
+        `SELECT o.order_id, o.user_id, o.event_id, o.tier_id, o.quantity, o.total_amount,
+                o.payment_status, o.attendee_name, o.attendee_email, o.mpesa_receipt_number,
+                e.title AS event_title, e.start_time, e.venue, e.city,
+                tt.tier_name, u.full_name AS user_name, u.email AS user_email
+         FROM Orders o
+         LEFT JOIN Ticket_Tiers tt ON tt.tier_id = o.tier_id
+         LEFT JOIN Events e ON e.event_id = COALESCE(o.event_id, tt.event_id)
+         LEFT JOIN Users u ON u.user_id = o.user_id
+         WHERE o.order_id = ? LIMIT 1`,
+        [orderId]
+    );
+    const order = orders[0];
+    if (!order) throw new Error(`Order ${orderId} was not found for ticket email delivery.`);
+
+    const recipientEmail = order.attendee_email || order.user_email;
+    const recipientName = order.attendee_name || order.user_name || 'Valued Guest';
+    if (!recipientEmail) return { sent: false, reason: 'No recipient email is available for this order' };
+
+    const [tickets] = await pool.query(
+        `SELECT ticket_id, ticket_code, attendee_name, tier_id
+         FROM Purchased_Tickets WHERE order_id = ? ORDER BY ticket_id ASC`,
+        [order.order_id]
+    );
+    if (!tickets.length) throw new Error(`Order ${orderId} has no issued tickets to email.`);
+
+    const attachments = [];
+    const ticketCards = await Promise.all(tickets.map(async (ticket, index) => {
+        const ticketCode = String(ticket.ticket_code || '');
+        const cid = `qr_${ticketCode}`;
+        const qrBuffer = await QRCode.toBuffer(ticketCode, { width: 260, margin: 2 });
+        attachments.push({ filename: `twende-ticket-${index + 1}.png`, content: qrBuffer, cid });
+        return `<article style="margin:18px 0;padding:20px;border:1px solid #e7e7e7;border-radius:14px;background:#fff;text-align:center">
+          <h3 style="margin:0 0 12px;color:#171717">${escapeEmailHtml(ticket.attendee_name || recipientName)}</h3>
+          <p style="margin:6px 0;color:#555"><strong>Tier:</strong> ${escapeEmailHtml(order.tier_name || 'General')}</p>
+          <p style="margin:6px 0;color:#555"><strong>Ticket Code:</strong> ${escapeEmailHtml(ticketCode)}</p>
+          <img src="cid:${escapeEmailHtml(cid)}" alt="Ticket QR" width="180" height="180" style="display:block;width:180px;height:180px;margin:16px auto 0" />
+        </article>`;
+    }));
+    const eventTitle = order.event_title || 'Twende Events';
+    const dateTime = order.start_time
+        ? new Intl.DateTimeFormat('en-KE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(String(order.start_time).replace(' ', 'T')))
+        : 'To be announced';
+    const quantity = Number(order.quantity || tickets.length);
+    const safe = escapeEmailHtml;
+    const html = `<!doctype html><html><body style="margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#222">
+      <div style="max-width:680px;margin:0 auto;padding:28px 16px">
+        <header style="padding:26px 24px;background:#e60000;border-radius:16px 16px 0 0;color:#fff"><div style="font-size:13px;letter-spacing:2px;font-weight:bold">TWENDE EVENTS</div><h1 style="margin:12px 0 0;font-size:25px;line-height:1.25">Your Twende Events Tickets &amp; M-Pesa Receipt</h1></header>
+        <main style="padding:24px;background:#fff;border-radius:0 0 16px 16px">
+          <p>Hello ${safe(recipientName)}, your payment is confirmed. Keep this receipt and show each QR ticket at the gate.</p>
+          <section style="padding:18px;background:#f7f7f7;border-radius:12px">
+            <h2 style="margin:0 0 14px;font-size:18px">Receipt Summary</h2>
+            <p style="margin:7px 0"><strong>Order #:</strong> ${safe(order.order_id)}</p>
+            <p style="margin:7px 0"><strong>M-Pesa Receipt:</strong> ${safe(order.mpesa_receipt_number || 'Not provided')}</p>
+            <p style="margin:7px 0"><strong>Amount Paid:</strong> KES ${Number(order.total_amount || 0).toLocaleString('en-KE')}</p>
+            <p style="margin:7px 0"><strong>Event Name:</strong> ${safe(eventTitle)}</p>
+            <p style="margin:7px 0"><strong>Date &amp; Time:</strong> ${safe(dateTime)}</p>
+            <p style="margin:7px 0"><strong>Venue:</strong> ${safe([order.venue, order.city].filter(Boolean).join(', ') || 'Venue to be announced')}</p>
+            <p style="margin:7px 0"><strong>Ticket Tier &amp; Quantity:</strong> ${safe(order.tier_name || 'General')} × ${quantity}</p>
+          </section>
+          <h2 style="margin:26px 0 8px;font-size:19px">Your QR Tickets</h2>
+          ${ticketCards.join('')}
+          <p style="text-align:center;margin:28px 0"><a href="https://twende-events.onrender.com/user-dashboard.html" style="display:inline-block;padding:14px 22px;background:#e60000;color:#fff;text-decoration:none;border-radius:9px;font-weight:bold">View My Tickets</a></p>
+          <p style="font-size:12px;color:#777;text-align:center">Twende Events · Kisii County, Kenya</p>
+        </main>
+      </div>
+    </body></html>`;
+
+    await mailTransporter.sendMail({
+        from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+        to: recipientEmail,
+        subject: `Your Tickets & Receipt — ${eventTitle} (Order #${orderId})`,
+        html,
+        attachments
+    });
+    return { sent: true, recipient: recipientEmail };
+}
 
 // Adds payment/ticket columns required by checkout without changing columns
 // that already exist in an active deployment.
@@ -809,6 +913,7 @@ async function fulfillPaidOrder(orderId, mpesaReceipt = null) {
             );
         }
         await connection.commit();
+        sendOrderTicketEmail(order.order_id).catch((error) => console.error('[Ticket Email Error]', error));
         return { found: true, status: 'paid', mpesaReceipt: mpesaReceipt || order.mpesa_receipt_number || null, tickets: ticketCodes };
     } catch (error) {
         await connection.rollback();
@@ -817,6 +922,46 @@ async function fulfillPaidOrder(orderId, mpesaReceipt = null) {
         connection.release();
     }
 }
+
+// Resend an order receipt and its QR tickets to the buyer. Access is allowed
+// to an admin session or the authenticated account that owns the order.
+app.post('/api/orders/:orderId/resend-email', async (req, res) => {
+    const bearer = /^Bearer\s+(.+)$/i.exec(req.get('authorization') || '');
+    const adminToken = req.get('x-admin-token') || (bearer && bearer[1]);
+    const isAdmin = isValidAdminToken(adminToken);
+    const user = isAdmin ? null : verifyUserToken(bearer?.[1]);
+    if (!isAdmin && !user) {
+        return res.status(401).json({ success: false, error: 'Sign in as the order owner or an admin to resend this email.' });
+    }
+
+    const orderId = Number(req.params.orderId);
+    if (!Number.isSafeInteger(orderId) || orderId < 1) {
+        return res.status(400).json({ success: false, error: 'A valid order ID is required.' });
+    }
+    try {
+        const [orders] = await pool.query(
+            `SELECT order_id, user_id, payment_status FROM Orders WHERE order_id = ? LIMIT 1`,
+            [orderId]
+        );
+        const order = orders[0];
+        if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
+        if (!isAdmin && Number(order.user_id) !== Number(user.user_id)) {
+            return res.status(403).json({ success: false, error: 'You can only resend receipts for your own orders.' });
+        }
+        if (!['paid', 'completed'].includes(String(order.payment_status || '').toLowerCase())) {
+            return res.status(400).json({ success: false, error: 'Only paid orders have tickets and receipts to resend.' });
+        }
+
+        const result = await sendOrderTicketEmail(orderId);
+        if (!result.sent) {
+            return res.status(500).json({ success: false, error: result.reason || 'Ticket email could not be sent.' });
+        }
+        return res.status(200).json({ success: true, message: `Tickets and receipt sent to ${result.recipient}` });
+    } catch (error) {
+        console.error('[Resend Ticket Email Error]', error);
+        return res.status(500).json({ success: false, error: error.message || 'Ticket email could not be sent.' });
+    }
+});
 
 async function markOrderFailed(orderIdentifier, reason) {
     const connection = await pool.getConnection();
