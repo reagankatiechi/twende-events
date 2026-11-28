@@ -6,10 +6,11 @@ require('dotenv').config();
 const app = express();
 const multer = require('multer');
 const path = require('path');
-const { randomUUID, createHmac, timingSafeEqual } = require('crypto');
+const { randomUUID, randomBytes, createHmac, timingSafeEqual } = require('crypto');
 const cloudinary = require('cloudinary').v2;
 const nodemailer = require('nodemailer');
 const QRCode = require('qrcode');
+const bcrypt = require('bcryptjs');
 
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -1394,17 +1395,32 @@ app.post('/api/login', async (req, res) => {
 
         // Check if the identifier matches either a phone number or an email
         const [users] = await pool.query(
-            `SELECT user_id, full_name, email, phone_number, role, created_at 
+            `SELECT user_id, full_name, email, phone_number, role, created_at, password_hash
              FROM Users 
-             WHERE (phone_number = ? OR email = ?) AND password_hash = ?`,
-            [identifier, identifier, password]
+             WHERE phone_number = ? OR LOWER(email) = LOWER(?) LIMIT 1`,
+            [identifier, identifier]
         );
 
-        if (users.length === 0) {
+        if (users.length === 0 || typeof password !== 'string') {
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
         const user = users[0];
+        let passwordMatches = false;
+        const storedPasswordHash = String(user.password_hash || '');
+        if (/^\$2[aby]\$\d{2}\$/.test(storedPasswordHash)) {
+            passwordMatches = await bcrypt.compare(password, storedPasswordHash);
+        } else {
+            // Older accounts stored their password as plain text. Upgrade those
+            // records to bcrypt on the first successful sign-in.
+            passwordMatches = user.password_hash === password;
+            if (passwordMatches) {
+                const upgradedHash = await bcrypt.hash(password, 10);
+                await pool.query('UPDATE Users SET password_hash = ? WHERE user_id = ?', [upgradedHash, user.user_id]);
+            }
+        }
+        if (!passwordMatches) return res.status(401).json({ error: 'Invalid credentials' });
+        delete user.password_hash;
         const adminToken = String(user.role || '').toLowerCase() === 'admin' ? createAdminToken() : undefined;
         const token = createUserToken(user);
         res.status(200).json({ message: 'Login successful', user, token, ...(adminToken ? { adminToken } : {}) });
@@ -1429,11 +1445,12 @@ app.post('/api/register', async (req, res) => {
             return res.status(400).json({ error: 'User with this email or phone already exists' });
         }
 
-        // Insert new user into the database
+        const passwordHash = await bcrypt.hash(String(password), 10);
+        // Store only a password hash for newly registered accounts.
         await pool.query(
             `INSERT INTO Users (full_name, email, phone_number, password_hash, role) 
              VALUES (?, ?, ?, ?, 'user')`,
-            [full_name, email, phone_number, password]
+            [full_name, email, phone_number, passwordHash]
         );
 
         res.status(201).json({ message: 'Registration successful' });
@@ -1980,6 +1997,63 @@ app.get('/api/admin/users', async (req, res) => {
     } catch (error) {
         console.error('Error fetching users:', error);
         res.status(500).json({ error: 'Failed to load users' });
+    }
+});
+// Admin-only password reset. The generated password is returned only to the
+// authenticated admin so it can be shared if email delivery is unavailable.
+app.post('/api/admin/users/:id/reset-password', async (req, res) => {
+    const userId = Number(req.params.id);
+    if (!Number.isSafeInteger(userId) || userId < 1) {
+        return res.status(400).json({ success: false, message: 'Invalid user ID.' });
+    }
+
+    try {
+        const [users] = await pool.query(
+            'SELECT user_id, full_name, email FROM Users WHERE user_id = ? LIMIT 1',
+            [userId]
+        );
+        if (!users.length) return res.status(404).json({ success: false, message: 'User not found.' });
+        const user = users[0];
+
+        const requestedPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword.trim() : '';
+        const tempPassword = requestedPassword.length >= 6
+            ? requestedPassword
+            : `Twende@${randomBytes(6).toString('base64url')}`;
+        const passwordHash = await bcrypt.hash(tempPassword, 10);
+        await pool.query('UPDATE Users SET password_hash = ? WHERE user_id = ?', [passwordHash, userId]);
+
+        let emailSent = false;
+        if (smtpConfigured && mailTransporter && user.email) {
+            const safeName = escapeEmailHtml(user.full_name || 'Twende Events member');
+            const loginUrl = 'https://twende-events.onrender.com/login.html';
+            const text = `Hello ${user.full_name || 'Twende Events member'},\n\nYour Twende Events password has been reset. Your temporary password is: ${tempPassword}\n\nSign in at ${loginUrl}, then update your password under Profile Settings.\n\nIf you did not request this change, contact Twende Events support.`;
+            const html = `<!doctype html><html><body style="margin:0;background:#f5f6f8;font-family:Arial,sans-serif;color:#222"><div style="max-width:560px;margin:32px auto;background:#fff;border-radius:16px;overflow:hidden"><div style="padding:22px 28px;background:#e60000;color:#fff;font-size:20px;font-weight:700">Twende Events</div><div style="padding:28px"><h1 style="font-size:23px;margin:0 0 14px">Your password has been reset</h1><p>Hello ${safeName},</p><p>Your temporary password is:</p><p style="padding:14px 16px;background:#f5f6f8;border-radius:8px;font-size:20px;font-weight:700;letter-spacing:1px;word-break:break-all">${escapeEmailHtml(tempPassword)}</p><p><a href="${loginUrl}" style="display:inline-block;padding:13px 20px;background:#e60000;color:#fff;text-decoration:none;border-radius:8px;font-weight:700">Sign in to Twende Events</a></p><p>After signing in, update your password under <strong>Profile Settings</strong>.</p><p style="color:#777;font-size:13px">If you did not request this change, contact Twende Events support.</p></div></div></body></html>`;
+            try {
+                await mailTransporter.sendMail({
+                    from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+                    to: user.email,
+                    subject: 'Your Twende Events Password Has Been Reset',
+                    text,
+                    html
+                });
+                emailSent = true;
+            } catch (emailError) {
+                console.error('[Admin Password Reset Email Error]', emailError);
+            }
+        } else if (!user.email) {
+            console.warn(`[Admin Password Reset] User ${userId} has no email address; password email was not sent.`);
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: 'Password reset successfully.',
+            tempPassword,
+            emailSent,
+            email: user.email || ''
+        });
+    } catch (error) {
+        console.error('[Admin Password Reset Error]', error);
+        return res.status(500).json({ success: false, message: 'Could not reset this user password.' });
     }
 });
 // Delete a user by ID

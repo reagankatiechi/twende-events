@@ -2383,6 +2383,53 @@ async function deleteUser(userId) {
   }
 }
 
+async function resetUserPassword(button) {
+  const userId = button?.dataset.resetPasswordId;
+  const userName = button?.dataset.userName || 'this user';
+  const userEmail = button?.dataset.userEmail || 'No email on file';
+  if (!userId || !window.confirm(`Reset the password for ${userName} (${userEmail})? A temporary password will be generated and emailed when SMTP is available.`)) return;
+
+  const feedback = document.querySelector('#reset-password-feedback');
+  const originalLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Resetting…';
+  if (feedback) feedback.hidden = true;
+
+  try {
+    const response = await window.adminFetch(`${API_BASE_URL}/api/admin/users/${encodeURIComponent(userId)}/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success) throw new Error(data.message || data.error || `Password reset failed (${response.status}).`);
+
+    const delivery = data.emailSent
+      ? `Reset email sent to ${data.email || userEmail}.`
+      : `Reset email was not delivered to ${data.email || userEmail}; share the temporary password directly.`;
+    const message = `${data.message || 'Password reset successfully.'} ${delivery} Temporary password: ${data.tempPassword}`;
+    if (feedback) {
+      feedback.textContent = message;
+      feedback.classList.toggle('is-warning', !data.emailSent);
+      feedback.hidden = false;
+    }
+    window.alert(message);
+  } catch (error) {
+    console.error('Unable to reset user password:', error);
+    const message = error.message || 'Could not reset this password. Please try again.';
+    if (feedback) {
+      feedback.textContent = message;
+      feedback.classList.add('is-warning');
+      feedback.hidden = false;
+    } else {
+      window.alert(message);
+    }
+  } finally {
+    button.disabled = false;
+    button.textContent = originalLabel;
+  }
+}
+
 // Registered users admin page
 (() => {
   const usersTableBody = document.querySelector('#users-table-body');
@@ -2399,7 +2446,7 @@ async function deleteUser(userId) {
       const users = await response.json();
 
       if (!Array.isArray(users) || users.length === 0) {
-        usersTableBody.innerHTML = '<tr><td class="admin-table-message" colspan="6">No registered users found.</td></tr>';
+        usersTableBody.innerHTML = '<tr><td class="admin-table-message" colspan="7">No registered users found.</td></tr>';
         return;
       }
 
@@ -2410,13 +2457,21 @@ async function deleteUser(userId) {
         <td>${escapeUserValue(user.phone_number || '—')}</td>
         <td>${user.created_at && !Number.isNaN(new Date(user.created_at).getTime()) ? escapeUserValue(new Date(user.created_at).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) + ' · ' + new Date(user.created_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })) : 'Before tracking'}</td>
         <td><span class="admin-status-badge admin-role-badge">${escapeUserValue(user.role || 'user')}</span></td>
-        <td><button class="admin-delete-event" type="button" data-user-id="${escapeUserValue(user.user_id ?? user.id ?? '')}" onclick="deleteUser(this.dataset.userId)">Delete</button></td>
+        <td><div class="admin-user-actions">
+          <button class="admin-reset-password" type="button" data-reset-password-id="${escapeUserValue(user.user_id ?? user.id ?? '')}" data-user-name="${escapeUserValue(user.full_name || 'Name unavailable')}" data-user-email="${escapeUserValue(user.email || '')}">Reset Password</button>
+          <button class="admin-delete-event" type="button" data-user-id="${escapeUserValue(user.user_id ?? user.id ?? '')}" onclick="deleteUser(this.dataset.userId)">Delete</button>
+        </div></td>
       </tr>`).join('');
     } catch (error) {
       console.error('Unable to load registered users:', error);
-      usersTableBody.innerHTML = '<tr><td class="admin-table-message is-error" colspan="6">Registered users could not be loaded. Please refresh to try again.</td></tr>';
+      usersTableBody.innerHTML = '<tr><td class="admin-table-message is-error" colspan="7">Registered users could not be loaded. Please refresh to try again.</td></tr>';
     }
   };
+
+  usersTableBody.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-reset-password-id]');
+    if (button) resetUserPassword(button);
+  });
 
   if (window.adminAccessReady) loadRegisteredUsers();
   else window.addEventListener('twende:admin-unlocked', loadRegisteredUsers, { once: true });
