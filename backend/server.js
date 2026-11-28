@@ -268,6 +268,10 @@ async function ensurePaymentSchema() {
                 quantity_sold: 'INT NOT NULL DEFAULT 0',
                 description: 'TEXT NULL'
             },
+            Users: {
+                reset_code_hash: 'VARCHAR(255) NULL',
+                reset_code_expires: 'DATETIME NULL'
+            },
             Tickets: {}
         };
 
@@ -281,10 +285,15 @@ async function ensurePaymentSchema() {
                     const hasPrimaryKey = columns.some((column) => column.COLUMN_KEY === 'PRI');
                     addDefinition += hasPrimaryKey ? ' UNIQUE' : ' PRIMARY KEY';
                 }
-                await connection.query(
-                    `ALTER TABLE ?? ADD COLUMN ?? ${addDefinition}`,
-                    [tableName, columnName]
-                );
+                try {
+                    await connection.query(
+                        `ALTER TABLE ?? ADD COLUMN ?? ${addDefinition}`,
+                        [tableName, columnName]
+                    );
+                } catch (migrationError) {
+                    if (migrationError.code !== 'ER_DUP_FIELDNAME') throw migrationError;
+                    console.info(`[schema] ${tableName}.${columnName} was added by another process`);
+                }
                 console.log(`[schema] Added ${tableName}.${columnName}`);
                 columns = [...columns, {
                     COLUMN_NAME: columnName,
@@ -1389,6 +1398,102 @@ app.post('/api/payments/reconcile-pending', requireAdminAccess, async (req, res)
 });
 
 // User Login Route (Accepts Email OR Phone Number)
+const genericForgotPasswordMessage = 'If an account exists for that email, a 6-digit reset code has been sent.';
+app.post('/api/auth/forgot-password', async (req, res) => {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    try {
+        if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+            const [users] = await pool.query(
+                'SELECT user_id, full_name, email FROM Users WHERE LOWER(email) = ? LIMIT 1',
+                [email]
+            );
+            if (users.length) {
+                const user = users[0];
+                const code = String(Math.floor(100000 + Math.random() * 900000));
+                const codeHash = await bcrypt.hash(code, 10);
+                await pool.query(
+                    `UPDATE Users
+                     SET reset_code_hash = ?, reset_code_expires = DATE_ADD(NOW(), INTERVAL 15 MINUTE)
+                     WHERE user_id = ?`,
+                    [codeHash, user.user_id]
+                );
+
+                if (mailTransporter && smtpConfigured) {
+                    const recipientName = escapeEmailHtml(user.full_name || 'Twende Events member');
+                    const safeCode = escapeEmailHtml(code);
+                    const text = `Hello ${user.full_name || 'Twende Events member'},\n\nYour Twende Events password reset code is ${code}. It expires in 15 minutes. If you did not request this code, you can ignore this email.`;
+                    const html = `<!doctype html><html><body style="margin:0;background:#f5f6f8;font-family:Arial,sans-serif;color:#222"><div style="max-width:560px;margin:32px auto;background:#fff;border-radius:16px;overflow:hidden"><div style="padding:22px 28px;background:#e60000;color:#fff;font-size:20px;font-weight:700">Twende Events</div><div style="padding:28px"><h1 style="font-size:23px;margin:0 0 14px">Reset your password</h1><p>Hello ${recipientName},</p><p>Use this verification code to reset your password:</p><p style="margin:22px 0;padding:18px;background:#fff4f4;border:1px solid #ffdada;border-radius:10px;text-align:center;color:#e60000;font-size:32px;font-weight:800;letter-spacing:8px">${safeCode}</p><p>This code expires in <strong>15 minutes</strong>. If you did not request a password reset, you can ignore this email.</p><p style="margin-top:28px;color:#777;font-size:12px">Twende Events · Kisii, Kenya</p></div></div></body></html>`;
+                    try {
+                        await mailTransporter.sendMail({
+                            from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+                            to: user.email,
+                            subject: 'Your Twende Events password reset code',
+                            text,
+                            html
+                        });
+                    } catch (mailError) {
+                        // Keep the response identical whether email exists or delivery succeeds.
+                        console.error('[Forgot Password Email Error]', mailError);
+                    }
+                } else {
+                    console.warn('[Forgot Password] SMTP is not configured; reset code email was not sent.');
+                }
+            }
+        }
+        return res.status(200).json({ success: true, message: genericForgotPasswordMessage });
+    } catch (error) {
+        console.error('[Forgot Password Error]', error);
+        // Do not reveal account existence or mail/database details through this public endpoint.
+        return res.status(200).json({ success: true, message: genericForgotPasswordMessage });
+    }
+});
+
+app.post('/api/auth/reset-password', async (req, res) => {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const code = String(req.body?.code || '').trim();
+    const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword.trim() : '';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !/^\d{6}$/.test(code) || newPassword.length < 6) {
+        return res.status(400).json({ success: false, message: 'Enter a valid email, 6-digit code, and password with at least 6 characters.' });
+    }
+
+    let connection;
+    try {
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+        const [users] = await connection.query(
+            'SELECT user_id, reset_code_hash, reset_code_expires FROM Users WHERE LOWER(email) = ? LIMIT 1 FOR UPDATE',
+            [email]
+        );
+        const user = users[0];
+        const expiresAt = user?.reset_code_expires ? new Date(user.reset_code_expires) : null;
+        const codeIsValid = Boolean(user?.reset_code_hash && expiresAt && !Number.isNaN(expiresAt.getTime())
+            && expiresAt > new Date() && await bcrypt.compare(code, user.reset_code_hash));
+        if (!codeIsValid) {
+            await connection.rollback();
+            return res.status(400).json({ success: false, message: 'Invalid or expired reset code.' });
+        }
+
+        const passwordHash = await bcrypt.hash(newPassword, 10);
+        await connection.query(
+            `UPDATE Users
+             SET password_hash = ?, reset_code_hash = NULL, reset_code_expires = NULL
+             WHERE user_id = ?`,
+            [passwordHash, user.user_id]
+        );
+        await connection.commit();
+        return res.status(200).json({
+            success: true,
+            message: 'Password updated successfully! You can now sign in with your new password.'
+        });
+    } catch (error) {
+        if (connection) await connection.rollback().catch(() => {});
+        console.error('[Reset Password Error]', error);
+        return res.status(500).json({ success: false, message: 'Could not reset the password right now. Please request a new code.' });
+    } finally {
+        connection?.release();
+    }
+});
+
 app.post('/api/login', async (req, res) => {
     try {
         const { identifier, password } = req.body; 

@@ -2506,6 +2506,142 @@ async function resetUserPassword(button) {
   const countryCodeInput = loginForm.querySelector('#country-code');
   const statusMessage = loginForm.querySelector('#login-status');
   const submitButton = loginForm.querySelector('button[type="submit"]');
+  const forgotView = document.querySelector('#forgot-password-view');
+  const openForgotButton = document.querySelector('#show-forgot-password');
+  const backToSigninButton = document.querySelector('#back-to-signin');
+  const forgotRequestForm = document.querySelector('#forgot-request-form');
+  const forgotResetForm = document.querySelector('#forgot-reset-form');
+  const forgotRequestStatus = document.querySelector('#forgot-request-status');
+  const forgotResetStatus = document.querySelector('#forgot-reset-status');
+  const forgotEmailInput = document.querySelector('#forgot-email');
+  const resetCodeInput = document.querySelector('#reset-code');
+  const resetPasswordInput = document.querySelector('#reset-new-password');
+  const confirmResetPasswordInput = document.querySelector('#reset-confirm-password');
+
+  const setForgotStatus = (element, message = '', type = '') => {
+    if (!element) return;
+    element.textContent = message;
+    element.classList.toggle('is-error', type === 'error');
+    element.classList.toggle('is-success', type === 'success');
+  };
+
+  openForgotButton?.addEventListener('click', () => {
+    if (!forgotView) return;
+    const currentIdentifier = identifierInput?.value.trim() || '';
+    if (currentIdentifier.includes('@') && forgotEmailInput) forgotEmailInput.value = currentIdentifier;
+    loginForm.hidden = true;
+    forgotView.hidden = false;
+    requestAnimationFrame(() => forgotView.classList.add('is-visible'));
+    forgotEmailInput?.focus();
+  });
+
+  backToSigninButton?.addEventListener('click', () => {
+    if (!forgotView) return;
+    forgotView.classList.remove('is-visible');
+    window.setTimeout(() => { forgotView.hidden = true; }, 240);
+    loginForm.hidden = false;
+    if (forgotRequestForm) forgotRequestForm.hidden = false;
+    if (forgotResetForm) forgotResetForm.hidden = true;
+    setForgotStatus(forgotRequestStatus);
+    setForgotStatus(forgotResetStatus);
+    identifierInput?.focus();
+  });
+
+  document.querySelectorAll('[data-password-toggle]').forEach((toggle) => {
+    toggle.addEventListener('click', () => {
+      const input = document.getElementById(toggle.dataset.passwordToggle);
+      if (!input) return;
+      const reveal = input.type === 'password';
+      input.type = reveal ? 'text' : 'password';
+      toggle.textContent = reveal ? 'Hide' : 'Show';
+      toggle.setAttribute('aria-label', `${reveal ? 'Hide' : 'Show'} new password`);
+      input.focus();
+    });
+  });
+
+  forgotRequestForm?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const email = forgotEmailInput?.value.trim().toLowerCase() || '';
+    const sendButton = forgotRequestForm.querySelector('[type="submit"]');
+    setForgotStatus(forgotRequestStatus, 'Requesting your reset code…');
+    if (sendButton) { sendButton.disabled = true; sendButton.setAttribute('aria-busy', 'true'); }
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.success === false) throw new Error(data.message || data.error || 'We could not request a reset code. Please try again.');
+
+      forgotResetForm.querySelector('[name="email"]').value = email;
+      forgotRequestForm.hidden = true;
+      forgotResetForm.hidden = false;
+      setForgotStatus(forgotRequestStatus, data.message || 'If an account exists for that email, a 6-digit reset code has been sent.', 'success');
+      resetCodeInput?.focus();
+    } catch (error) {
+      setForgotStatus(forgotRequestStatus, error.message || 'We could not request a reset code. Please try again.', 'error');
+    } finally {
+      if (sendButton) { sendButton.disabled = false; sendButton.removeAttribute('aria-busy'); }
+    }
+  });
+
+  forgotResetForm?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const email = forgotResetForm.querySelector('[name="email"]')?.value || '';
+    const code = resetCodeInput?.value.trim() || '';
+    const newPassword = resetPasswordInput?.value || '';
+    const confirmPassword = confirmResetPasswordInput?.value || '';
+    const resetButton = forgotResetForm.querySelector('[type="submit"]');
+    setForgotStatus(forgotResetStatus);
+
+    if (!/^\d{6}$/.test(code)) {
+      setForgotStatus(forgotResetStatus, 'Enter the 6-digit code from your email.', 'error');
+      resetCodeInput?.focus();
+      return;
+    }
+    if (newPassword.trim().length < 6) {
+      setForgotStatus(forgotResetStatus, 'Your new password must be at least 6 characters.', 'error');
+      resetPasswordInput?.focus();
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setForgotStatus(forgotResetStatus, 'The passwords do not match. Check both fields and try again.', 'error');
+      confirmResetPasswordInput?.focus();
+      return;
+    }
+
+    if (resetButton) { resetButton.disabled = true; resetButton.setAttribute('aria-busy', 'true'); }
+    setForgotStatus(forgotResetStatus, 'Updating your password…');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, code, newPassword })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) throw new Error(data.message || data.error || 'The reset code could not be verified. Request a new code and try again.');
+
+      loginForm.hidden = false;
+      forgotView.classList.remove('is-visible');
+      forgotView.hidden = true;
+      forgotRequestForm.hidden = false;
+      forgotResetForm.hidden = true;
+      identifierInput.value = email;
+      passwordInput.value = '';
+      forgotResetForm.reset();
+      setForgotStatus(forgotRequestStatus);
+      setForgotStatus(forgotResetStatus);
+      statusMessage.textContent = 'Password updated! Sign in with your new password.';
+      statusMessage.classList.remove('is-error');
+      statusMessage.classList.add('is-success');
+      passwordInput.focus();
+    } catch (error) {
+      setForgotStatus(forgotResetStatus, error.message || 'The password could not be updated. Please try again.', 'error');
+    } finally {
+      if (resetButton) { resetButton.disabled = false; resetButton.removeAttribute('aria-busy'); }
+    }
+  });
 
   loginForm.addEventListener('submit', async (event) => {
     event.preventDefault();

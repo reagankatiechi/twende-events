@@ -349,6 +349,29 @@
 .login-register-link { margin: -2px 0 0; color: #77716f; font-size: 9px; text-align: center; }
 .login-register-link a { color: #e60000; font-weight: 700; text-decoration: none; }
 .login-register-link a:hover { text-decoration: underline; }
+.login-password-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.forgot-password-trigger, .forgot-back-link { padding: 0; border: 0; background: transparent; color: #e60000; font: inherit; font-size: 9px; font-weight: 700; cursor: pointer; }
+.forgot-password-trigger:hover, .forgot-back-link:hover { color: #b90000; text-decoration: underline; }
+.forgot-password-view { display: grid; gap: 16px; opacity: 0; transform: translateY(8px); transition: opacity .24s ease, transform .24s ease; }
+.forgot-password-view.is-visible { opacity: 1; transform: translateY(0); }
+.forgot-password-view[hidden], .forgot-password-form[hidden], .login-form[hidden] { display: none !important; }
+.forgot-password-form { display: grid; gap: 14px; }
+.forgot-password-form .form-field { display: grid; gap: 7px; }
+.forgot-password-form .form-field > label { font-size: 7px; letter-spacing: .12em; color: #8d8783; font-weight: 800; }
+.forgot-password-form .form-field input { width: 100%; height: 42px; border: 1px solid #e4e1de; border-radius: 6px; background: #fff; padding: 0 11px; color: #171615; font: 500 10px var(--font); outline: none; transition: border-color .2s, box-shadow .2s; }
+.forgot-password-form .form-field input:focus { border-color: var(--red); box-shadow: 0 0 0 3px #e6000012; }
+.forgot-password-form .form-field input::placeholder { color: #aaa4a0; font-weight: 400; }
+.password-reveal-field { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border: 1px solid #e4e1de; border-radius: 6px; overflow: hidden; transition: border-color .2s, box-shadow .2s; }
+.password-reveal-field:focus-within { border-color: var(--red); box-shadow: 0 0 0 3px #e6000012; }
+.password-reveal-field input { min-width: 0; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; }
+.password-visibility-toggle { height: 100%; padding: 0 11px; border: 0; border-left: 1px solid #eee9e6; background: #faf9f8; color: #625b57; font: 700 9px var(--font); cursor: pointer; }
+.password-visibility-toggle:hover { color: #e60000; background: #fff4f4; }
+.forgot-status { min-height: 0; margin: -3px 0 0; color: #6d6763; font-size: 9px; line-height: 1.55; }
+.forgot-status.is-error { color: #b42318; }
+.forgot-status.is-success { padding: 10px 11px; border: 1px solid #c9e8d0; border-radius: 6px; background: #effaf2; color: #208044; }
+.forgot-back-link { justify-self: start; }
+.login-status.is-success { padding: 10px 11px; border: 1px solid #c9e8d0; border-radius: 6px; background: #effaf2; color: #208044; }
+.login-status.is-error { padding: 9px; border-radius: 6px; background: #fff2f1; color: #b42318; }
 
 /* User Dashboard */
 .user-dashboard-page { min-height: 100vh; margin: 0; background: #f7f8fa; color: #171719; font-family: 'DM Sans', Inter, Arial, sans-serif; }

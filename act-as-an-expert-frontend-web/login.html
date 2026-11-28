@@ -30,11 +30,28 @@
           <div class="login-card-heading"><h2 id="login-card-title">Welcome back</h2><p>Enter your email or phone number and password to sign in.</p></div>
           <form id="login-form" class="login-form">
             <div class="auth-panel" id="auth-panel-phone"><label class="login-field-label" for="login-phone">EMAIL OR PHONE NUMBER</label><div class="phone-entry"><label class="sr-only" for="country-code">Country code</label><select id="country-code" data-country-code-select aria-label="Country calling code"></select><input id="login-phone" name="identifier" type="text" placeholder="Email or phone number" autocomplete="username" required></div></div>
-            <div class="form-field"><label for="login-password">PASSWORD</label><input id="login-password" name="password" type="password" placeholder="Enter your password" autocomplete="current-password" required></div>
+            <div class="form-field login-password-field"><div class="login-password-heading"><label for="login-password">PASSWORD</label><button class="forgot-password-trigger" id="show-forgot-password" type="button">Forgot password?</button></div><input id="login-password" name="password" type="password" placeholder="Enter your password" autocomplete="current-password" required></div>
             <p class="login-status" id="login-status" aria-live="polite" role="alert"></p>
             <button class="login-submit" type="submit">Login <span>→</span></button>
             <p class="login-register-link">Don't have an account? <a href="register.html">Register here.</a></p>
           </form>
+          <section class="forgot-password-view" id="forgot-password-view" aria-labelledby="forgot-password-title" hidden>
+            <div class="login-card-heading"><h2 id="forgot-password-title">Reset your password</h2><p>We’ll email you a six-digit code that expires in 15 minutes.</p></div>
+            <form id="forgot-request-form" class="forgot-password-form">
+              <div class="form-field"><label for="forgot-email">EMAIL ADDRESS</label><input id="forgot-email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required></div>
+              <p class="forgot-status" id="forgot-request-status" aria-live="polite" role="status"></p>
+              <button class="login-submit" type="submit">Send 6-Digit Reset Code <span>→</span></button>
+            </form>
+            <form id="forgot-reset-form" class="forgot-password-form" hidden>
+              <input type="hidden" name="email">
+              <div class="form-field"><label for="reset-code">6-DIGIT VERIFICATION CODE</label><input id="reset-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required></div>
+              <div class="form-field"><label for="reset-new-password">NEW PASSWORD</label><div class="password-reveal-field"><input id="reset-new-password" name="newPassword" type="password" autocomplete="new-password" minlength="6" placeholder="At least 6 characters" required><button class="password-visibility-toggle" type="button" data-password-toggle="reset-new-password" aria-label="Show new password">Show</button></div></div>
+              <div class="form-field"><label for="reset-confirm-password">CONFIRM NEW PASSWORD</label><input id="reset-confirm-password" name="confirmPassword" type="password" autocomplete="new-password" minlength="6" placeholder="Enter the password again" required></div>
+              <p class="forgot-status" id="forgot-reset-status" aria-live="polite" role="status"></p>
+              <button class="login-submit" type="submit">Reset Password <span>→</span></button>
+            </form>
+            <button class="forgot-back-link" id="back-to-signin" type="button">← Back to Sign In</button>
+          </section>
           <p class="login-card-note">Use the phone number and password connected to your Twende Events account.</p>
         </section>
       </div>
