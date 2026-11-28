@@ -370,6 +370,17 @@ async function ensurePaymentSchema() {
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         `);
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS Platform_Feedback (
+                feedback_id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT NULL,
+                reviewer_name VARCHAR(150) NULL,
+                reviewer_email VARCHAR(190) NULL,
+                rating TINYINT NOT NULL,
+                comment TEXT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        `);
     } finally {
         connection.release();
     }
@@ -521,6 +532,95 @@ app.delete('/api/admin/messages/:messageId', async (req, res) => {
     } catch (error) {
         console.error(`Error deleting contact inquiry ${messageId}:`, error);
         return res.status(500).json({ error: 'Could not delete inquiry.' });
+    }
+});
+
+app.post('/api/feedback', async (req, res) => {
+    const rating = Number(req.body?.rating);
+    const comment = typeof req.body?.comment === 'string' ? req.body.comment.trim().slice(0, 1000) : '';
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+        return res.status(400).json({ error: 'Please select a star rating from 1 to 5.' });
+    }
+
+    let userId = null;
+    let reviewerName = typeof req.body?.name === 'string' && req.body.name.trim()
+        ? req.body.name.trim().slice(0, 150)
+        : 'Guest Visitor';
+    let reviewerEmail = typeof req.body?.email === 'string' && req.body.email.trim()
+        ? req.body.email.trim().slice(0, 190)
+        : null;
+
+    try {
+        const authHeader = String(req.headers.authorization || '');
+        if (authHeader.startsWith('Bearer ') && typeof verifyUserToken === 'function') {
+            const payload = verifyUserToken(authHeader.slice(7).trim());
+            if (payload?.userId) {
+                const [users] = await pool.query(
+                    'SELECT user_id, full_name, email FROM Users WHERE user_id = ? LIMIT 1',
+                    [payload.userId]
+                );
+                if (users.length) {
+                    userId = users[0].user_id;
+                    reviewerName = users[0].full_name || reviewerName;
+                    reviewerEmail = users[0].email || reviewerEmail;
+                }
+            }
+        }
+    } catch (_) {}
+
+    try {
+        await pool.query(
+            `INSERT INTO Platform_Feedback (user_id, reviewer_name, reviewer_email, rating, comment)
+             VALUES (?, ?, ?, ?, ?)`,
+            [userId, reviewerName, reviewerEmail, rating, comment || null]
+        );
+        return res.status(201).json({ success: true, message: 'Thank you for rating Twende Events!' });
+    } catch (error) {
+        console.error('Error saving platform feedback:', error);
+        return res.status(500).json({ error: 'Could not save your feedback right now. Please try again.' });
+    }
+});
+
+app.get('/api/admin/feedback', async (req, res) => {
+    try {
+        const [feedback] = await pool.query(
+            `SELECT feedback_id, user_id, reviewer_name, reviewer_email, rating, comment, created_at
+             FROM Platform_Feedback
+             ORDER BY created_at DESC, feedback_id DESC`
+        );
+        const [[summary]] = await pool.query(
+            `SELECT COUNT(*) AS totalCount,
+                    ROUND(AVG(rating), 1) AS averageRating,
+                    SUM(CASE WHEN rating <= 3 THEN 1 ELSE 0 END) AS needsAttentionCount
+             FROM Platform_Feedback`
+        );
+        return res.status(200).json({
+            success: true,
+            stats: {
+                totalCount: Number(summary?.totalCount || 0),
+                averageRating: Number(summary?.averageRating || 0),
+                needsAttentionCount: Number(summary?.needsAttentionCount || 0)
+            },
+            feedback
+        });
+    } catch (error) {
+        console.error('Error loading platform feedback:', error);
+        return res.status(500).json({ error: 'Could not load user feedback.' });
+    }
+});
+
+app.delete('/api/admin/feedback/:feedbackId', async (req, res) => {
+    const feedbackId = Number(req.params.feedbackId);
+    if (!Number.isSafeInteger(feedbackId) || feedbackId < 1) {
+        return res.status(400).json({ error: 'Invalid feedback ID.' });
+    }
+    try {
+        const [result] = await pool.query('DELETE FROM Platform_Feedback WHERE feedback_id = ?', [feedbackId]);
+        if (!result.affectedRows) return res.status(404).json({ error: 'Feedback entry not found.' });
+        return res.status(200).json({ success: true });
+    } catch (error) {
+        console.error(`Error deleting platform feedback ${feedbackId}:`, error);
+        return res.status(500).json({ error: 'Could not delete feedback.' });
     }
 });
 

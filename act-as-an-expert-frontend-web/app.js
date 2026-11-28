@@ -465,9 +465,47 @@ if (ratingForm) {
     if (!starsContainer.contains(event.relatedTarget)) paintStars(selectedRating);
   });
 
-  ratingForm.addEventListener('submit', (event) => {
+  ratingForm.addEventListener('submit', async (event) => {
     event.preventDefault();
-    ratingForm.innerHTML = '<div class="rating-success" role="status"><span class="rating-success-icon" aria-hidden="true">✓</span><p>Thank you! Your feedback keeps Kisii moving.</p></div>';
+    if (!selectedRating) {
+      alert('Please select a star rating from 1 to 5 first.');
+      return;
+    }
+    const submitBtn = ratingForm.querySelector('.rating-submit');
+    const commentInput = ratingForm.querySelector('#rating-comment');
+    const originalLabel = submitBtn ? submitBtn.textContent : 'Submit Feedback';
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Sending...';
+    }
+    try {
+      const token = localStorage.getItem('twendeUserToken') || sessionStorage.getItem('twendeUserToken') || '';
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const response = await fetch(`${API_BASE_URL}/api/feedback`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ rating: selectedRating, comment: commentInput ? commentInput.value : '' })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Could not submit feedback.');
+      selectedRating = 0;
+      paintStars(0);
+      if (commentInput) commentInput.value = '';
+      if (submitBtn) submitBtn.textContent = 'Thank you for your feedback! ✓';
+      setTimeout(() => {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = originalLabel;
+        }
+      }, 3000);
+    } catch (error) {
+      alert(error.message || 'Could not submit feedback right now.');
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = originalLabel;
+      }
+    }
   });
 }
 
@@ -2003,7 +2041,8 @@ async function deleteEvent(eventId) {
     events: { title: 'Events & Ticket Tiers', eyebrow: 'EVENT OPERATIONS' },
     approvals: { title: 'Pending Event Approvals', eyebrow: 'MODERATION QUEUE' },
     reconciliation: { title: 'M-Pesa Reconciliation', eyebrow: 'PAYMENT OPERATIONS' },
-    inquiries: { title: 'Support Inquiries', eyebrow: 'CUSTOMER CARE' }
+    inquiries: { title: 'Support Inquiries', eyebrow: 'CUSTOMER CARE' },
+    feedback: { title: 'User Feedback & Ratings', eyebrow: 'EXPERIENCE MONITOR' }
   };
   let activeAdminView = 'overview';
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
@@ -2033,6 +2072,7 @@ async function deleteEvent(eventId) {
     if (activeAdminView === 'approvals') window.loadPendingEvents?.();
     if (activeAdminView === 'reconciliation') loadOrders();
     if (activeAdminView === 'inquiries') loadSupportMessages();
+    if (activeAdminView === 'feedback') loadAdminFeedback();
   }
   function activateAdminView(name, updateUrl = true) {
     activeAdminView = Object.hasOwn(viewLabels, name) ? name : 'overview';
@@ -2324,6 +2364,94 @@ async function deleteEvent(eventId) {
     }
   }
   document.querySelector('#support-refresh')?.addEventListener('click', loadSupportMessages);
+
+  let feedbackEntries = [];
+  let feedbackFilter = 'all';
+  const feedbackList = document.querySelector('#admin-feedback-list');
+
+  const renderAdminFeedback = () => {
+    if (!feedbackList) return;
+    const visible = feedbackEntries.filter((item) => {
+      const r = Number(item.rating || 0);
+      if (feedbackFilter === '5') return r === 5;
+      if (feedbackFilter === '4') return r === 4;
+      if (feedbackFilter === 'low') return r <= 3;
+      return true;
+    });
+    if (!visible.length) {
+      feedbackList.innerHTML = `<div class="support-empty-state">${feedbackEntries.length ? 'No reviews match this star filter.' : 'No user feedback submitted yet.'}</div>`;
+      return;
+    }
+    feedbackList.innerHTML = visible.map((item) => {
+      const r = Math.max(1, Math.min(5, Number(item.rating || 5)));
+      const stars = '★'.repeat(r) + '☆'.repeat(5 - r);
+      const emailMarkup = item.reviewer_email ? `<a href="mailto:${esc(item.reviewer_email)}">${esc(item.reviewer_email)}</a>` : '<span>Public visitor</span>';
+      return `<article class="support-inquiry-card ${r <= 3 ? 'is-unread' : ''}">
+        <header class="support-inquiry-header">
+          <div><h3>${esc(item.reviewer_name || 'Guest Visitor')}</h3>${emailMarkup}</div>
+          <span class="support-status-badge ${r <= 3 ? 'is-unread' : 'is-resolved'}" style="letter-spacing:1px;">${stars} (${r}/5)</span>
+        </header>
+        <div class="support-inquiry-meta"><time datetime="${esc(item.created_at || '')}">${dateLabel(item.created_at)}</time></div>
+        <p class="support-message-body">${item.comment ? esc(item.comment) : '<em>No written comment provided.</em>'}</p>
+        <footer class="support-inquiry-actions">
+          ${item.reviewer_email ? `<a class="admin-row-button support-reply-button" href="mailto:${esc(item.reviewer_email)}?subject=${encodeURIComponent('Thank you for your Twende Events feedback')}">Follow Up</a>` : ''}
+          <button class="admin-row-button is-warning" type="button" data-delete-feedback="${esc(item.feedback_id)}">Delete</button>
+        </footer>
+      </article>`;
+    }).join('');
+  };
+
+  async function loadAdminFeedback() {
+    const statusEl = document.querySelector('#feedback-list-status');
+    if (!feedbackList) return;
+    if (statusEl) statusEl.textContent = 'Loading user ratings…';
+    try {
+      const data = await getJson(`${API_BASE_URL}/api/admin/feedback`);
+      feedbackEntries = Array.isArray(data.feedback) ? data.feedback : [];
+      const stats = data.stats || {};
+      const avgEl = document.querySelector('#feedback-avg-rating');
+      const totalEl = document.querySelector('#feedback-total-reviews');
+      const lowEl = document.querySelector('#feedback-low-reviews');
+      const badgeEl = document.querySelector('#feedback-total-count');
+      if (avgEl) avgEl.textContent = `${Number(stats.averageRating || 0).toFixed(1)} / 5 ★`;
+      if (totalEl) totalEl.textContent = String(Number(stats.totalCount || 0));
+      if (lowEl) lowEl.textContent = String(Number(stats.needsAttentionCount || 0));
+      if (badgeEl) {
+        badgeEl.textContent = String(Number(stats.totalCount || 0));
+        badgeEl.hidden = Number(stats.totalCount || 0) === 0;
+      }
+      renderAdminFeedback();
+      if (statusEl) statusEl.textContent = `${feedbackEntries.length} total reviews`;
+    } catch (error) {
+      console.error('Unable to load user feedback:', error);
+      if (statusEl) statusEl.textContent = error.message || 'User feedback could not be loaded.';
+      feedbackList.innerHTML = '<div class="support-empty-state is-error">User feedback could not be loaded. Please refresh.</div>';
+    }
+  }
+
+  document.querySelector('#feedback-refresh')?.addEventListener('click', loadAdminFeedback);
+  document.querySelectorAll('[data-feedback-filter]').forEach((button) => button.addEventListener('click', () => {
+    feedbackFilter = button.dataset.feedbackFilter;
+    document.querySelectorAll('[data-feedback-filter]').forEach((pill) => {
+      const active = pill === button;
+      pill.classList.toggle('is-active', active);
+      pill.setAttribute('aria-pressed', String(active));
+    });
+    renderAdminFeedback();
+  }));
+  feedbackList?.addEventListener('click', async (event) => {
+    const delBtn = event.target.closest('[data-delete-feedback]');
+    if (!delBtn) return;
+    const id = delBtn.dataset.deleteFeedback;
+    delBtn.disabled = true;
+    try {
+      await getJson(`${API_BASE_URL}/api/admin/feedback/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      await loadAdminFeedback();
+    } catch (error) {
+      alert(error.message || 'Could not delete feedback.');
+      delBtn.disabled = false;
+    }
+  });
   supportSearch?.addEventListener('input', renderSupportMessages);
   document.querySelectorAll('[data-support-filter]').forEach((button) => button.addEventListener('click', () => {
     supportFilter = button.dataset.supportFilter;
